@@ -29,7 +29,7 @@ services:
     image: 'phpmyadmin:5.2.1'
     restart: unless-stopped
     ports:
-      - '8081:80'
+      - '8089:80'
     environment:
       - 'PMA_HOST=mysql'
       - 'UPLOAD_LIMIT=102400K'
@@ -38,6 +38,29 @@ services:
     depends_on:
       mysql:
         condition: service_healthy
+    networks:
+      - plebemr_admin_network
+
+  api:
+    build: ./api
+    container_name: plebdoc-scheduler-service-api-1
+    environment:
+      NODE_ENV: development
+    depends_on:
+      - mysql
+    networks:
+      - plebemr_admin_network
+
+  swagger-ui:
+    image: swaggerapi/swagger-ui:latest
+    container_name: plebdoc-scheduler-service-swagger-1
+    environment:
+      SWAGGER_JSON_URL: http://plebdoc-scheduler-service-api-1:3004/api-docs.json
+      API_URL: http://plebdoc-scheduler-service-api-1:3004/api-docs.json
+    ports:
+      - "8082:8080"
+    depends_on:
+      - api
     networks:
       - plebemr_admin_network
 

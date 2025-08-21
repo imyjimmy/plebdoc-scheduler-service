@@ -1,6 +1,7 @@
 import { setupProviderRoutes } from './routes/providers.js';
 import { setupAppointmentRoutes } from './routes/appointments.js';
 import { setupAdminRoutes } from './routes/admin.js';
+import { swaggerSpec } from './docs/swagger.js';
 
 const PORT = process.env.PORT || 3004;
 
@@ -57,6 +58,13 @@ const server = Bun.serve({
     setupAppointmentRoutes(app);
     setupAdminRoutes(app);
 
+    // Serve Swagger JSON spec
+    if (url.pathname === '/api-docs.json') {
+      return new Response(JSON.stringify(swaggerSpec), {
+        headers: { 'Content-Type': 'application/json', ...corsHeaders }
+      });
+    }
+    
     // If no route matched, return 404
     return new Response(JSON.stringify({ error: 'Not found' }), {
       status: 404,

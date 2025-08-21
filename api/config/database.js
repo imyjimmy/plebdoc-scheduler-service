@@ -3,9 +3,9 @@ import mysql from 'mysql2/promise';
 const getMySQLHost = () => {
   // Container name varies by environment
   if (process.env.NODE_ENV === 'production') {
-    return 'umbrel_appointments_mysql_1';
+    return 'mgitreposerver-mgit-repo-server_appointments_mysql_1';
   }
-  return 'plebdoc-appointments-service-appointments-mysql-1';
+  return 'plebdoc-appointments-service-mysql-1';
 };
 
 const pool = mysql.createPool({
