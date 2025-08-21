@@ -1,0 +1,20 @@
+# MySQL data directory - NEVER commit this!
+data/
+data/mysql/
+*.sql.gz
+
+# Logs
+*.log
+logs/
+
+# Environment files
+.env
+.env.local
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Backup files
+backups/*.sql
+backups/*.sql.gz
