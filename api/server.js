@@ -52,10 +52,15 @@ const server = Bun.serve({
         }
       }
     };
+    
+    console.log('🔍 Request:', req.method, url.pathname);
 
     // Setup routes
+    console.log('🔧 Setting up provider routes...');
     setupProviderRoutes(app);
+    console.log('🔧 Setting up appointment routes...');
     setupAppointmentRoutes(app);
+    console.log('🔧 Setting up admin routes...');
     setupAdminRoutes(app);
 
     // Serve Swagger JSON spec
