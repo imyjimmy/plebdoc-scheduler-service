@@ -19,10 +19,10 @@ export const setupProviderRoutes = (app) => {
       }));
 
       connection.release();
-      res.json(formattedProviders);
+      return res.json(formattedProviders);
     } catch (error) {
       console.error('Error fetching providers:', error);
-      res.status(500).json({ error: 'Failed to fetch providers' });
+      return res.status(500).json({ error: 'Failed to fetch providers' });
     }
   });
 
@@ -49,10 +49,10 @@ export const setupProviderRoutes = (app) => {
       }));
 
       connection.release();
-      res.json(formattedServices);
+      return res.json(formattedServices);
     } catch (error) {
       console.error('Error fetching services for provider:', error);
-      res.status(500).json({ error: 'Failed to fetch services' });
+      return res.status(500).json({ error: 'Failed to fetch services' });
     }
   });
 
@@ -128,7 +128,7 @@ export const setupProviderRoutes = (app) => {
       // Calculate available hours
       const availableHours = utils.calculateAvailableHours(date, currentTime, timezone, service, providerWithPlan, appointments);
 
-      res.json({
+      return res.json({
         date,
         providerId,
         serviceId,
@@ -140,7 +140,7 @@ export const setupProviderRoutes = (app) => {
 
     } catch (error) {
       console.error('Error fetching provider availability:', error);
-      res.status(500).json({ error: 'Failed to fetch availability' });
+      return res.status(500).json({ error: 'Failed to fetch availability' });
     } finally {
       if (connection) connection.release();
     }

@@ -77,6 +77,7 @@ const server = Bun.serve({
           console.log('✅ Found matching route:', pattern);
           const reqObj = createReq(req, url, pattern);
           const resObj = createRes(corsHeaders);
+          console.log('resObj: ', resObj);
           return await handler(reqObj, resObj);
         }
       }
