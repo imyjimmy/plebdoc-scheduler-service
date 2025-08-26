@@ -12,7 +12,7 @@ RUN bun install
 COPY . .
 
 # Expose port
-EXPOSE 3004
+EXPOSE 3005
 
 # Start the server
 CMD ["bun", "server.js"]

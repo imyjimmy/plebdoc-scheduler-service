@@ -6,7 +6,7 @@ COPY --from=node:alpine /usr/local/lib/node_modules/npm /usr/local/lib/node_modu
 COPY --from=node:alpine /usr/local/bin/npm /usr/local/bin/
 
 # Set API URL to point to our API service
-ENV API_URL=http://localhost:3004/api-docs.json
+ENV API_URL=http://localhost:3005/api-docs.json
 ENV SWAGGER_JSON=/app/swagger.json
 
 # The swagger-ui image will serve the UI
