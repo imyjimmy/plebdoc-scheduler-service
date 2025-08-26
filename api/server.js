@@ -5,10 +5,43 @@ import { swaggerSpec } from './docs/swagger.js';
 
 const PORT = process.env.PORT || 3005;
 
+// Route registry - collect all routes here
+const routes = {
+  GET: new Map(),
+  POST: new Map(),
+  PUT: new Map(),
+  DELETE: new Map()
+};
+
+// Create app-like object that STORES routes
+const app = {
+  get: (path, handler) => routes.GET.set(path, handler),
+  post: (path, handler) => routes.POST.set(path, handler),
+  put: (path, handler) => routes.PUT.set(path, handler),
+  delete: (path, handler) => routes.DELETE.set(path, handler)
+};
+
+// Register all routes ONCE at startup
+console.log('🔧 Setting up provider routes...');
+setupProviderRoutes(app);
+console.log('🔧 Setting up appointment routes...');
+setupAppointmentRoutes(app);
+console.log('🔧 Setting up admin routes...');
+setupAdminRoutes(app);
+
+console.log(`📋 Registered routes:`, {
+  GET: Array.from(routes.GET.keys()),
+  POST: Array.from(routes.POST.keys()),
+  PUT: Array.from(routes.PUT.keys()),
+  DELETE: Array.from(routes.DELETE.keys())
+});
+
 const server = Bun.serve({
   port: PORT,
   async fetch(req) {
     const url = new URL(req.url);
+    
+    console.log('🔍 Request:', req.method, url.pathname);
     
     // CORS headers
     const corsHeaders = {
@@ -29,47 +62,27 @@ const server = Bun.serve({
       });
     }
 
-    // Create a simple app-like object to match Express patterns
-    const app = {
-      get: (path, handler) => {
-        if (req.method === 'GET' && matchPath(url.pathname, path)) {
-          return handler(createReq(req, url, path), createRes(corsHeaders));
-        }
-      },
-      post: (path, handler) => {
-        if (req.method === 'POST' && matchPath(url.pathname, path)) {
-          return handler(createReq(req, url, path), createRes(corsHeaders));
-        }
-      },
-      put: (path, handler) => {
-        if (req.method === 'PUT' && matchPath(url.pathname, path)) {
-          return handler(createReq(req, url, path), createRes(corsHeaders));
-        }
-      },
-      delete: (path, handler) => {
-        if (req.method === 'DELETE' && matchPath(url.pathname, path)) {
-          return handler(createReq(req, url, path), createRes(corsHeaders));
-        }
-      }
-    };
-    
-    console.log('🔍 Request:', req.method, url.pathname);
-
-    // Setup routes
-    console.log('🔧 Setting up provider routes...');
-    setupProviderRoutes(app);
-    console.log('🔧 Setting up appointment routes...');
-    setupAppointmentRoutes(app);
-    console.log('🔧 Setting up admin routes...');
-    setupAdminRoutes(app);
-
     // Serve Swagger JSON spec
     if (url.pathname === '/api-docs.json') {
       return new Response(JSON.stringify(swaggerSpec), {
         headers: { 'Content-Type': 'application/json', ...corsHeaders }
       });
     }
+
+    // Find matching route
+    const methodRoutes = routes[req.method];
+    if (methodRoutes) {
+      for (const [pattern, handler] of methodRoutes) {
+        if (matchPath(url.pathname, pattern)) {
+          console.log('✅ Found matching route:', pattern);
+          const reqObj = createReq(req, url, pattern);
+          const resObj = createRes(corsHeaders);
+          return await handler(reqObj, resObj);
+        }
+      }
+    }
     
+    console.log('❌ No route matched for:', req.method, url.pathname);
     // If no route matched, return 404
     return new Response(JSON.stringify({ error: 'Not found' }), {
       status: 404,
@@ -80,9 +93,8 @@ const server = Bun.serve({
 
 console.log(`🚀 Plebdoc Appointments Service running on port ${PORT}`);
 
-// Helper functions to create Express-like req/res objects
+// Helper functions (same as before)
 function matchPath(pathname, pattern) {
-  // Simple pattern matching - you might want to use a proper router library
   if (pattern.includes(':')) {
     const patternParts = pattern.split('/');
     const pathnameParts = pathname.split('/');
@@ -101,7 +113,6 @@ function matchPath(pathname, pattern) {
 function createReq(req, url, pattern) {
   const params = {};
   
-  // Extract params from URL
   if (pattern.includes(':')) {
     const patternParts = pattern.split('/');
     const pathnameParts = url.pathname.split('/');
