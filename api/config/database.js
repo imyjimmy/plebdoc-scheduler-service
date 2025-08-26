@@ -5,7 +5,7 @@ const getMySQLHost = () => {
   if (process.env.NODE_ENV === 'production') {
     return 'mgitreposerver-mgit-repo-server_appointments_mysql_1';
   }
-  return 'plebdoc-appointments-service-mysql-1';
+  return 'mgit-repo-server_appointments_mysql_1';
 };
 
 const pool = mysql.createPool({
