@@ -3,7 +3,7 @@ import { setupAppointmentRoutes } from './routes/appointments.js';
 import { setupAdminRoutes } from './routes/admin.js';
 import { swaggerSpec } from './docs/swagger.js';
 
-const PORT = process.env.PORT || 3004;
+const PORT = process.env.PORT || 3005;
 
 const server = Bun.serve({
   port: PORT,
