@@ -53,7 +53,12 @@ export const setupAdminRoutes = (app) => {
   });
 
   // User lookup by Nostr pubkey
-  app.get('/api/admin/user-lookup/:pubkey', validateAuthToken, async (req, res) => {
+  app.get('/api/admin/user-lookup/:pubkey', async (req, res) => {
+    const authResult = validateAuthToken(req, res);
+    if (authResult && !authResult.success) {
+      return authResult; // This will be the error response
+    }
+
     try {
       const { pubkey } = req.params;
       console.log('Looking up user by pubkey:', pubkey);
@@ -87,7 +92,7 @@ export const setupAdminRoutes = (app) => {
         `, [user.id_roles]);
         roleConnection.release();
         
-        res.json({
+        return res.json({
           status: 'success',
           userFound: true,
           user: {
@@ -96,7 +101,7 @@ export const setupAdminRoutes = (app) => {
           }
         });
       } else {
-        res.json({
+        return res.json({
           status: 'success',
           userFound: false,
           message: 'No user found with this Nostr pubkey'
@@ -105,7 +110,7 @@ export const setupAdminRoutes = (app) => {
       
     } catch (error) {
       console.error('User lookup failed:', error);
-      res.status(500).json({
+      return res.status(500).json({
         status: 'error',
         message: 'User lookup failed',
         error: error.message
