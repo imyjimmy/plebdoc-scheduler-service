@@ -3,7 +3,13 @@ import { validateAuthToken } from '../middleware/auth.js';
 
 export const setupAdminRoutes = (app) => {
   // Database test endpoint
-  app.get('/api/admin/database-test', validateAuthToken, async (req, res) => {
+  app.get('/api/admin/database-test', async (req, res) => {
+    const authResult = validateAuthToken(req, res);
+    
+    if (!authResult.success) {
+      return res.status(401).json({ error: authResult.error });
+    }
+    
     try {
       console.log('Testing database connection...');
       
@@ -31,7 +37,7 @@ export const setupAdminRoutes = (app) => {
       
       connection.release();
       
-      res.json({
+      return res.json({
         status: 'success',
         message: 'Database connection successful',
         data: {
@@ -54,6 +60,9 @@ export const setupAdminRoutes = (app) => {
 
   // User lookup by Nostr pubkey
   app.get('/api/admin/user-lookup/:pubkey', async (req, res) => {
+    console.log('Route handler called with req keys:', Object.keys(req));
+    console.log('Route handler req.headers:', req.headers);
+    
     const authResult = validateAuthToken(req, res);
     if (authResult && !authResult.success) {
       return authResult; // This will be the error response
@@ -119,7 +128,12 @@ export const setupAdminRoutes = (app) => {
   });
 
   // User registration endpoint
-  app.post('/api/admin/register-user', validateAuthToken, async (req, res) => {
+  app.post('/api/admin/register-user', async (req, res) => {
+    const authResult = validateAuthToken(req, res);
+    if (!authResult.success) {
+      return res.status(401).json({ error: authResult.error });
+    }
+    
     try {
       const { firstName, lastName, email, phoneNumber } = req.body;
       const { pubkey } = req.user;
@@ -221,7 +235,7 @@ export const setupAdminRoutes = (app) => {
       
       console.log('User registered successfully:', newUser);
       
-      res.json({
+      return res.json({
         status: 'success',
         message: 'User registered successfully',
         user: {
@@ -244,7 +258,7 @@ export const setupAdminRoutes = (app) => {
       
     } catch (error) {
       console.error('User registration failed:', error);
-      res.status(500).json({
+      return res.status(500).json({
         status: 'error',
         message: 'User registration failed',
         error: error.message
@@ -253,29 +267,53 @@ export const setupAdminRoutes = (app) => {
   });
 
   // Service management endpoints
-  app.get('/api/admin/services', validateAuthToken, async (req, res) => {
+  app.get('/api/admin/services', async (req, res) => {
+    const authResult = validateAuthToken(req, res);
+    if (!authResult.success) {
+      return res.status(401).json({ error: authResult.error });
+    }
+
     try {
+      const { pubkey } = req.user;
       const connection = await pool.getConnection();
       
+      console.log("getting pubkey: ", pubkey);
+      // First, get the user ID from the pubkey
+      const [userRows] = await connection.execute(`
+        SELECT id FROM users WHERE nostr_pubkey = ? AND id_roles IN (2, 5)
+      `, [pubkey]);
+      
+      if (userRows.length === 0) {
+        connection.release();
+        return res.status(404).json({ 
+          status: 'error',
+          message: 'Provider not found' 
+        });
+      }
+      const providerId = userRows[0].id;
+      
+      // Now get the services for this provider
       const [services] = await connection.execute(`
         SELECT 
           s.*,
           sc.name as category_name
         FROM services s
         LEFT JOIN service_categories sc ON s.id_service_categories = sc.id
+        INNER JOIN services_providers sp ON s.id = sp.id_services
+        WHERE sp.id_users = ?
         ORDER BY s.name
-      `);
+      `, [providerId]);
       
       connection.release();
-      
-      res.json({
+            
+      return res.json({
         status: 'success',
         services: services
       });
       
     } catch (error) {
       console.error('Failed to load services:', error);
-      res.status(500).json({
+      return res.status(500).json({
         status: 'error',
         message: 'Failed to load services',
         error: error.message
@@ -284,7 +322,12 @@ export const setupAdminRoutes = (app) => {
   });
 
   // Get service categories
-  app.get('/api/admin/service-categories', validateAuthToken, async (req, res) => {
+  app.get('/api/admin/service-categories', async (req, res) => {
+    const authResult = validateAuthToken(req, res);
+    if (!authResult.success) {
+      return res.status(401).json({ error: authResult.error });
+    }
+
     try {
       const connection = await pool.getConnection();
       
@@ -296,14 +339,14 @@ export const setupAdminRoutes = (app) => {
       
       connection.release();
       
-      res.json({
+      return res.json({
         status: 'success',
         categories: categories
       });
       
     } catch (error) {
       console.error('Failed to load service categories:', error);
-      res.status(500).json({
+      return res.status(500).json({
         status: 'success',
         categories: []
       });
@@ -311,7 +354,12 @@ export const setupAdminRoutes = (app) => {
   });
 
   // Create new service
-  app.post('/api/admin/services', validateAuthToken, async (req, res) => {
+  app.post('/api/admin/services', async (req, res) => {
+    const authResult = validateAuthToken(req, res);
+    if (!authResult.success) {
+      return res.status(401).json({ error: authResult.error });
+    }
+
     try {
       const {
         name,
@@ -393,7 +441,7 @@ export const setupAdminRoutes = (app) => {
       await connection.commit();
       connection.release();
       
-      res.json({
+      return res.json({
         status: 'success',
         message: 'Service created successfully',
         service_id: result.insertId
@@ -401,7 +449,7 @@ export const setupAdminRoutes = (app) => {
       
     } catch (error) {
       console.error('Failed to create service:', error);
-      res.status(500).json({
+      return res.status(500).json({
         status: 'error',
         message: 'Failed to create service',
         error: error.message
@@ -410,7 +458,12 @@ export const setupAdminRoutes = (app) => {
   });
 
   // Update service
-  app.put('/api/admin/services/:id', validateAuthToken, async (req, res) => {
+  app.put('/api/admin/services/:id', async (req, res) => {
+    const authResult = validateAuthToken(req, res);
+    if (!authResult.success) {
+      return res.status(401).json({ error: authResult.error });
+    }
+    
     try {
       const { id } = req.params;
       const {
@@ -474,14 +527,14 @@ export const setupAdminRoutes = (app) => {
         });
       }
       
-      res.json({
+      return res.json({
         status: 'success',
         message: 'Service updated successfully'
       });
       
     } catch (error) {
       console.error('Failed to update service:', error);
-      res.status(500).json({
+      return res.status(500).json({
         status: 'error',
         message: 'Failed to update service',
         error: error.message
@@ -490,7 +543,12 @@ export const setupAdminRoutes = (app) => {
   });
 
   // Delete service
-  app.delete('/api/admin/services/:id', validateAuthToken, async (req, res) => {
+  app.delete('/api/admin/services/:id', async (req, res) => {
+    const authResult = validateAuthToken(req, res);
+    if (!authResult.success) {
+      return res.status(401).json({ error: authResult.error });
+    }
+
     try {
       const { id } = req.params;
       
@@ -523,14 +581,14 @@ export const setupAdminRoutes = (app) => {
         });
       }
       
-      res.json({
+      return res.json({
         status: 'success',
         message: 'Service deleted successfully'
       });
       
     } catch (error) {
       console.error('Failed to delete service:', error);
-      res.status(500).json({
+      return res.status(500).json({
         status: 'error',
         message: 'Failed to delete service',
         error: error.message
@@ -539,7 +597,12 @@ export const setupAdminRoutes = (app) => {
   });
 
   // Get working plan from settings
-  app.get('/api/admin/working-plan', validateAuthToken, async (req, res) => {
+  app.get('/api/admin/working-plan', async (req, res) => {
+    const authResult = validateAuthToken(req, res);
+    if (!authResult.success) {
+      return res.status(401).json({ error: authResult.error });
+    }
+
     try {
       console.log('GET /api/admin/working-plan');
       const connection = await pool.getConnection();
@@ -559,14 +622,14 @@ export const setupAdminRoutes = (app) => {
       
       const workingPlan = JSON.parse(rows[0].value);
       
-      res.json({
+      return res.json({
         status: 'success',
         working_plan: workingPlan
       });
       
     } catch (error) {
       console.error('Failed to fetch working plan:', error);
-      res.status(500).json({
+      return res.status(500).json({
         status: 'error',
         message: 'Failed to fetch working plan',
         error: error.message

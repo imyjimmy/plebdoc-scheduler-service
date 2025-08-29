@@ -75,7 +75,7 @@ const server = Bun.serve({
       for (const [pattern, handler] of methodRoutes) {
         if (matchPath(url.pathname, pattern)) {
           console.log('✅ Found matching route:', pattern);
-          const reqObj = createReq(req, url, pattern);
+          const reqObj = await createReq(req, url, pattern);
           const resObj = createRes(corsHeaders);
           console.log('resObj: ', resObj);
           return await handler(reqObj, resObj);
@@ -111,7 +111,14 @@ function matchPath(pathname, pattern) {
   return pathname === pattern;
 }
 
-function createReq(req, url, pattern) {
+async function createReq(req, url, pattern) {
+  console.log('createReq called with:');
+  console.log('  - method:', req.method);
+  console.log('  - url.pathname:', url.pathname);
+  console.log('  - pattern:', pattern);
+  console.log('  - req.headers type:', typeof req.headers);
+  console.log('  - req.headers has entries method:', typeof req.headers?.entries);
+
   const params = {};
   
   if (pattern.includes(':')) {
@@ -124,15 +131,36 @@ function createReq(req, url, pattern) {
         params[paramName] = pathnameParts[i];
       }
     }
+    console.log('  - extracted params:', params);
   }
 
-  return {
+  // Parse body for POST/PUT requests
+  let body = null;
+  const contentType = req.headers.get('content-type');
+  console.log('  - content-type:', contentType);
+  
+  if (['POST', 'PUT'].includes(req.method) && contentType?.includes('application/json')) {
+    console.log('  - parsing JSON body...');
+    body = await req.json();
+    console.log('  - parsed body:', body);
+  }
+
+  const headerEntries = Array.from(req.headers.entries());
+  console.log('  - header entries sample:', headerEntries.slice(0, 3));
+  
+  const headersObj = Object.fromEntries(headerEntries);
+  console.log('  - converted headers keys:', Object.keys(headersObj));
+
+  const reqObj = {
     params,
     query: Object.fromEntries(url.searchParams),
-    headers: Object.fromEntries(req.headers.entries()),
-    body: req.body,
-    json: () => req.json()
+    headers: headersObj,
+    body: body,
+    json: () => Promise.resolve(body)
   };
+  
+  console.log('createReq returning object with headers:', Object.keys(reqObj.headers));
+  return reqObj;
 }
 
 function createRes(corsHeaders) {
