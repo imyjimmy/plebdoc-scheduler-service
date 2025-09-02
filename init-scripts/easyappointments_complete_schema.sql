@@ -111,6 +111,21 @@ CREATE TABLE `service_categories` (
   `description` text COLLATE utf8mb4_unicode_ci
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE `invoices` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `appointment_id` int NOT NULL,
+  `payment_request` text COLLATE utf8mb4_unicode_ci NOT NULL,
+  `amount_sats` int NOT NULL,
+  `invoice_hash` varchar(256) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `status` varchar(32) COLLATE utf8mb4_unicode_ci DEFAULT 'pending',
+  `created_at` datetime DEFAULT NULL,
+  `paid_at` datetime DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `unique_appointment_invoice` (`appointment_id`),
+  KEY `idx_invoice_hash` (`invoice_hash`),
+  CONSTRAINT `invoices_appointments` FOREIGN KEY (`appointment_id`) REFERENCES `appointments` (`id`) ON DELETE CASCADE ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE `settings` (
   `id` int NOT NULL,
   `create_datetime` datetime DEFAULT NULL,
