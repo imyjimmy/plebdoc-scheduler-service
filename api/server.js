@@ -29,7 +29,7 @@ console.log('🔧 Setting up appointment routes...');
 setupAppointmentRoutes(app);
 console.log('🔧 Setting up admin routes...');
 setupAdminRoutes(app);
-setupBillingRoutes(app, validateAuthToken);
+setupBillingRoutes(app);
 console.log('✅ Billing routes initialized');
 
 console.log(`📋 Registered routes:`, {
