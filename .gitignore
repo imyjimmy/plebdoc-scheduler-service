@@ -1,3 +1,4 @@
+node_modules
 phpmyadmintunnel.sh
 
 # MySQL data directory - NEVER commit this!
