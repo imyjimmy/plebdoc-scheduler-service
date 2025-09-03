@@ -1,6 +1,7 @@
 import { setupProviderRoutes } from './routes/providers.js';
 import { setupAppointmentRoutes } from './routes/appointments.js';
 import { setupAdminRoutes } from './routes/admin.js';
+import { setupBillingRoutes } from './routes/billing.js';
 import { swaggerSpec } from './docs/swagger.js';
 
 const PORT = process.env.PORT || 3005;
@@ -28,6 +29,8 @@ console.log('🔧 Setting up appointment routes...');
 setupAppointmentRoutes(app);
 console.log('🔧 Setting up admin routes...');
 setupAdminRoutes(app);
+setupBillingRoutes(app, validateAuthToken);
+console.log('✅ Billing routes initialized');
 
 console.log(`📋 Registered routes:`, {
   GET: Array.from(routes.GET.keys()),

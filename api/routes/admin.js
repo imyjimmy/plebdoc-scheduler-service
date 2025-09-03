@@ -636,4 +636,127 @@ export const setupAdminRoutes = (app) => {
       });
     }
   });
+
+  // Get completed appointments for billing
+  app.get('/api/admin/appointments/completed', validateAuthToken, async (req, res) => {
+    try {
+      const connection = await pool.getConnection();
+      
+      const [appointments] = await connection.execute(`
+        SELECT 
+          a.id,
+          a.start_datetime,
+          a.end_datetime,
+          a.id_services,
+          a.id_users_customer,
+          a.id_users_provider,
+          a.status,
+          a.notes,
+          s.name as service_name,
+          s.price as service_price,
+          s.duration as service_duration,
+          s.currency as service_currency,
+          c.first_name as customer_first_name,
+          c.last_name as customer_last_name,
+          c.email as customer_email,
+          c.nostr_pubkey as customer_pubkey,
+          CASE WHEN i.appointment_id IS NOT NULL THEN 1 ELSE 0 END as invoiced
+        FROM appointments a
+        JOIN services s ON a.id_services = s.id
+        JOIN users c ON a.id_users_customer = c.id
+        LEFT JOIN invoices i ON a.id = i.appointment_id
+        WHERE a.end_datetime < NOW()
+        AND a.status != 'cancelled'
+        ORDER BY a.start_datetime DESC
+      `);
+      
+      const formattedAppointments = appointments.map(apt => ({
+        id: apt.id,
+        start_datetime: apt.start_datetime,
+        end_datetime: apt.end_datetime,
+        id_services: apt.id_services,
+        id_users_customer: apt.id_users_customer,
+        id_users_provider: apt.id_users_provider,
+        status: apt.status,
+        invoiced: apt.invoiced === 1,
+        service: {
+          id: apt.id_services,
+          name: apt.service_name,
+          price: parseFloat(apt.service_price),
+          currency: apt.service_currency,
+          duration: apt.service_duration
+        },
+        customer: {
+          id: apt.id_users_customer,
+          first_name: apt.customer_first_name,
+          last_name: apt.customer_last_name,
+          email: apt.customer_email,
+          nostr_pubkey: apt.customer_pubkey
+        }
+      }));
+      
+      connection.release();
+      res.json(formattedAppointments);
+      
+    } catch (error) {
+      console.error('Failed to fetch completed appointments:', error);
+      res.status(500).json({
+        status: 'error',
+        message: 'Failed to fetch completed appointments',
+        error: error.message
+      });
+    }
+  });
+
+  // Mark appointment as invoiced
+  app.post('/api/admin/appointments/:id/invoice', validateAuthToken, async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { payment_request, amount_sats, invoice_hash } = req.body;
+      
+      const connection = await pool.getConnection();
+      
+      // First check if appointment exists and is not already invoiced
+      const [existingInvoices] = await connection.execute(
+        'SELECT id FROM invoices WHERE appointment_id = ?',
+        [id]
+      );
+      
+      if (existingInvoices.length > 0) {
+        connection.release();
+        return res.status(400).json({
+          status: 'error',
+          message: 'Appointment already invoiced'
+        });
+      }
+      
+      // Create invoice record
+      const [result] = await connection.execute(`
+        INSERT INTO invoices (
+          appointment_id,
+          payment_request,
+          amount_sats,
+          invoice_hash,
+          status,
+          created_at
+        ) VALUES (?, ?, ?, ?, 'pending', NOW())
+      `, [id, payment_request, amount_sats, invoice_hash]);
+      
+      connection.release();
+      
+      res.json({
+        status: 'success',
+        message: 'Invoice created successfully',
+        invoice_id: result.insertId
+      });
+      
+    } catch (error) {
+      console.error('Failed to create invoice:', error);
+      res.status(500).json({
+        status: 'error',
+        message: 'Failed to create invoice',
+        error: error.message
+      });
+    }
+  });
 };
