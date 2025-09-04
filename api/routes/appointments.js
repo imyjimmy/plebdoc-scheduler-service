@@ -15,6 +15,35 @@ const generateLoginToken = (pubkey) => {
   return token;
 };
 
+const createNewCustomer = async (connection, bookingData, signedEvent) => {
+  console.log('🆕 Creating new customer user: ', connection, bookingData, signedEvent);
+  // Create new customer user (existing code)
+  const [customerRole] = await connection.execute(
+    'SELECT id FROM roles WHERE slug = "customer"'
+  );
+  
+  if (customerRole.length === 0) {
+    throw new Error('Customer role not found');
+  }
+
+  const [customerResult] = await connection.execute(
+    `INSERT INTO users (id_roles, first_name, last_name, email, phone_number, nostr_pubkey, create_datetime, update_datetime) 
+    VALUES (?, ?, ?, ?, ?, ?, NOW(), NOW())`,
+    [
+      customerRole[0].id,
+      bookingData.patientInfo.firstName,
+      bookingData.patientInfo.lastName,
+      bookingData.patientInfo.email || null,
+      bookingData.patientInfo.phone || null,
+      signedEvent.pubkey
+    ]
+  );
+  
+  let customerId = customerResult.insertId;
+  console.log(`✅ Created new customer with ID: ${customerId}`);
+  return customerId;
+}
+
 export const setupAppointmentRoutes = (app) => {
   // Create an appointment with Nostr signature verification
   app.post('/api/appointments/verify-booking', async (req, res) => {
@@ -57,42 +86,42 @@ export const setupAppointmentRoutes = (app) => {
       try {
         await connection.beginTransaction();
 
-        // First, check if customer exists or create one
+        // Get the authenticated user from the token instead of assuming new customer
+        const authResult = validateAuthToken(req, res);
+        if (authResult && !authResult.success) {
+          return authResult; // This will be the error response
+        }
+
         let customerId;
-        const [existingCustomers] = await connection.execute(
-          'SELECT u.id FROM users u JOIN roles r ON u.id_roles = r.id WHERE u.nostr_pubkey = ? AND r.slug = "customer"',
-          [signedEvent.pubkey]
-        );
-
-        if (existingCustomers.length > 0) {
-          customerId = existingCustomers[0].id;
-          console.log(`✅ Found existing customer with ID: ${customerId}`);
-        } else {
-          console.log('🆕 Creating new customer user');
-          // Create new customer user
-          const [customerRole] = await connection.execute(
-            'SELECT id FROM roles WHERE slug = "customer"'
+        
+        // First, try to get the customer ID from the authenticated user
+        if (authResult && authResult.user && authResult.user.pubkey === signedEvent.pubkey) {
+          // User is already authenticated and pubkeys match
+          const [existingUser] = await connection.execute(
+            'SELECT u.id FROM users u JOIN roles r ON u.id_roles = r.id WHERE u.nostr_pubkey = ? AND r.slug = "customer"',
+            [signedEvent.pubkey]
           );
           
-          if (customerRole.length === 0) {
-            throw new Error('Customer role not found');
+          if (existingUser.length > 0) {
+            customerId = existingUser[0].id;
+            console.log(`✅ Using authenticated customer with ID: ${customerId}`);
+          } else {
+            // throw new Error('Authenticated user not found or not a customer');
+            customerId = await createNewCustomer(connection, bookingData, signedEvent);
           }
-
-          const [customerResult] = await connection.execute(
-            `INSERT INTO users (id_roles, first_name, last_name, email, phone_number, nostr_pubkey, create_datetime, update_datetime) 
-            VALUES (?, ?, ?, ?, ?, ?, NOW(), NOW())`,
-            [
-              customerRole[0].id,
-              bookingData.patientInfo.firstName,
-              bookingData.patientInfo.lastName,
-              bookingData.patientInfo.email || null,
-              bookingData.patientInfo.phone || null,
-              signedEvent.pubkey
-            ]
+        } else {
+          // Fallback: Check if customer exists or create new one (for unauthenticated bookings)
+          const [existingCustomers] = await connection.execute(
+            'SELECT u.id FROM users u JOIN roles r ON u.id_roles = r.id WHERE u.nostr_pubkey = ? AND r.slug = "customer"',
+            [signedEvent.pubkey]
           );
-          
-          customerId = customerResult.insertId;
-          console.log(`✅ Created new customer with ID: ${customerId}`);
+
+          if (existingCustomers.length > 0) {
+            customerId = existingCustomers[0].id;
+            console.log(`✅ Found existing customer with ID: ${customerId}`);
+          } else {
+            customerId = await createNewCustomer(connection, bookingData, signedEvent);
+          }
         }
 
         // Get service duration for end_datetime calculation
@@ -130,7 +159,7 @@ export const setupAppointmentRoutes = (app) => {
 
         await connection.commit();
 
-        res.json({ 
+        return res.json({ 
           status: 'OK',
           appointmentId: appointmentResult.insertId,
           message: 'Appointment created successfully'
@@ -145,7 +174,7 @@ export const setupAppointmentRoutes = (app) => {
       
     } catch (error) {
       console.error('Booking verification error:', error);
-      res.status(500).json({ 
+      return res.status(500).json({ 
         status: 'error', 
         reason: error.message || 'Verification failed' 
       });
@@ -217,6 +246,115 @@ export const setupAppointmentRoutes = (app) => {
     } catch (error) {
       console.error('Token validation error:', error);
       res.status(500).json({ error: 'Token validation failed' });
+    }
+  });
+
+  // Get completed appointments for billing
+  app.get('/api/admin/appointments/completed/:providerId', async (req, res) => {
+    const authResult = validateAuthToken(req, res);
+    if (authResult && !authResult.success) {
+      return authResult; // This will be the error response
+    }
+    
+    let connection;
+    try {
+      const { providerId } = req.params;
+
+      connection = await pool.getConnection();
+
+      const [appointments] = await connection.execute(`
+        SELECT 
+          a.id,
+          a.start_datetime,
+          a.end_datetime,
+          a.id_services,
+          a.id_users_customer,
+          a.id_users_provider,
+          CONCAT(c.first_name, ' ', c.last_name) as customer_name,
+          c.email as customer_email,
+          s.name as service_name,
+          s.price as service_price,
+          s.duration as service_duration
+        FROM appointments a
+        JOIN users c ON a.id_users_customer = c.id
+        JOIN services s ON a.id_services = s.id
+        WHERE a.id_users_provider = ?
+          AND a.end_datetime < NOW()
+          AND a.is_unavailability = 0
+        ORDER BY a.start_datetime DESC
+        LIMIT 50
+      `, [providerId]);
+
+      return res.json({
+        status: 'success',
+        appointments: appointments
+      });
+
+    } catch (error) {
+      console.error('Error fetching past appointments:', error);
+      return res.status(500).json({
+        status: 'error',
+        message: 'Failed to fetch past appointments'
+      });
+    } finally {
+      if (connection) connection.release();
+    }
+  });
+
+  // Mark appointment as invoiced
+  app.post('/api/admin/appointments/:id/invoice', async (req, res) => {
+    const authResult = validateAuthToken(req, res);
+    if (authResult && !authResult.success) {
+      return authResult; // This will be the error response
+    }
+
+    try {
+      const { id } = req.params;
+      const { payment_request, amount_sats, invoice_hash } = req.body;
+      
+      const connection = await pool.getConnection();
+      
+      // First check if appointment exists and is not already invoiced
+      const [existingInvoices] = await connection.execute(
+        'SELECT id FROM invoices WHERE appointment_id = ?',
+        [id]
+      );
+      
+      if (existingInvoices.length > 0) {
+        connection.release();
+        return res.status(400).json({
+          status: 'error',
+          message: 'Appointment already invoiced'
+        });
+      }
+      
+      // Create invoice record
+      const [result] = await connection.execute(`
+        INSERT INTO invoices (
+          appointment_id,
+          payment_request,
+          amount_sats,
+          invoice_hash,
+          status,
+          created_at
+        ) VALUES (?, ?, ?, ?, 'pending', NOW())
+      `, [id, payment_request, amount_sats, invoice_hash]);
+      
+      connection.release();
+      
+      return res.json({
+        status: 'success',
+        message: 'Invoice created successfully',
+        invoice_id: result.insertId
+      });
+      
+    } catch (error) {
+      console.error('Failed to create invoice:', error);
+      return res.status(500).json({
+        status: 'error',
+        message: 'Failed to create invoice',
+        error: error.message
+      });
     }
   });
 };
