@@ -51,6 +51,7 @@ const server = Bun.serve({
       'Access-Control-Allow-Origin': '*',
       'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
       'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+      'Content-Security-Policy': "default-src 'self'; script-src 'self' 'unsafe-eval' 'unsafe-inline' chrome-extension: moz-extension:; connect-src 'self' wss: https: chrome-extension: moz-extension: http://localhost:3004; img-src 'self' data: https: chrome-extension: moz-extension:; style-src 'self' 'unsafe-inline' chrome-extension: moz-extension:; font-src 'self' data: chrome-extension: moz-extension:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'self';"
     };
 
     // Handle preflight requests

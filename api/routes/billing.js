@@ -280,7 +280,7 @@ const billingService = new BillingService(process.env.NWC_CONNECTION_STRING || '
 export const setupBillingRoutes = (app) => {
   
   // Create invoice for appointment payment
-  app.post('/api/billing/appointments/:appointmentId/invoice', async (req, res) => {
+  app.post('/api/admin/billing/appointments/:appointmentId/invoice', async (req, res) => {
     const authResult = validateAuthToken(req, res);
     if (authResult && !authResult.success) {
       return authResult; // This will be the error response
@@ -361,7 +361,7 @@ export const setupBillingRoutes = (app) => {
   });
 
   // Create invoice for general service payment
-  app.post('/api/billing/services/:serviceId/invoice', async (req, res) => {
+  app.post('/api/admin/billing/services/:serviceId/invoice', async (req, res) => {
     const authResult = validateAuthToken(req, res);
     if (authResult && !authResult.success) {
       return authResult; // This will be the error response
@@ -455,7 +455,7 @@ export const setupBillingRoutes = (app) => {
   });
 
   // Check payment status of an invoice
-  app.get('/api/billing/invoices/:paymentRequest/status', async (req, res) => {
+  app.get('/api/admin/billing/invoices/:paymentRequest/status', async (req, res) => {
     const authResult = validateAuthToken(req, res);
     if (authResult && !authResult.success) {
       return authResult; // This will be the error response
@@ -508,7 +508,7 @@ export const setupBillingRoutes = (app) => {
   });
 
   // Get all pending invoices
-  app.get('/api/billing/invoices/pending', async (req, res) => {
+  app.get('/api/admin/billing/invoices/pending', async (req, res) => {
     const authResult = validateAuthToken(req, res);
     if (authResult && !authResult.success) {
       return authResult; // This will be the error response
@@ -534,7 +534,7 @@ export const setupBillingRoutes = (app) => {
   });
 
   // Get invoice history
-  app.get('/api/billing/invoices/history', async (req, res) => {
+  app.get('/api/admin/billing/invoices/history', async (req, res) => {
     const authResult = validateAuthToken(req, res);
     if (authResult && !authResult.success) {
       return authResult; // This will be the error response
@@ -597,7 +597,7 @@ export const setupBillingRoutes = (app) => {
   });
 
   // Manual cleanup of expired invoices
-  app.post('/api/billing/invoices/cleanup', async (req, res) => {
+  app.post('/api/admin/billing/invoices/cleanup', async (req, res) => {
     const authResult = validateAuthToken(req, res);
     if (authResult && !authResult.success) {
       return authResult; // This will be the error response
@@ -646,7 +646,7 @@ export const setupBillingRoutes = (app) => {
   });
 
   // Get billing statistics
-  app.get('/api/billing/stats', async (req, res) => {
+  app.get('/api/admin/billing/stats', async (req, res) => {
     const authResult = validateAuthToken(req, res);
     if (authResult && !authResult.success) {
       return authResult; // This will be the error response
@@ -711,7 +711,7 @@ export const setupBillingRoutes = (app) => {
   });
 
   // Webhook for payment notifications (if supported by wallet)
-  app.post('/api/billing/webhook/payment', async (req, res) => {
+  app.post('/api/admin/billing/webhook/payment', async (req, res) => {
     try {
       const { paymentRequest, paymentHash } = req.body;
 
