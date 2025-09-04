@@ -83,7 +83,7 @@ class BillingService {
 
     } catch (error) {
       console.error(`💥 Appointment invoice creation failed:`, error);
-      return this.createMockInvoice(appointmentId, amountSats, 'appointment', expiry, description);
+      // return this.createMockInvoice(appointmentId, amountSats, 'appointment', expiry, description);
     }
   }
 
@@ -132,39 +132,39 @@ class BillingService {
 
     } catch (error) {
       console.error(`💥 Service invoice creation failed:`, error);
-      return this.createMockInvoice(serviceId, amountSats, 'service', expiry, description);
+      // return this.createMockInvoice(serviceId, amountSats, 'service', expiry, description);
     }
   }
 
   // Mock invoice for testing
-  createMockInvoice(entityId, amountSats, type, expiry, description) {
-    console.log(`🧪 Creating mock ${type} invoice: ${amountSats} sats, expires in ${expiry}s`);
+  // createMockInvoice(entityId, amountSats, type, expiry, description) {
+  //   console.log(`🧪 Creating mock ${type} invoice: ${amountSats} sats, expires in ${expiry}s`);
     
-    const mockInvoice = `lnbc${amountSats}n1test_${type}_${entityId}_${Date.now()}`;
+  //   const mockInvoice = `lnbc${amountSats}n1test_${type}_${entityId}_${Date.now()}`;
     
-    const invoiceData = {
-      entityId,
-      amountSats,
-      type,
-      description,
-      expiry,
-      expiresAt: Date.now() + (expiry * 1000),
-      createdAt: Date.now(),
-      mock: true,
-      status: 'pending'
-    };
+  //   const invoiceData = {
+  //     entityId,
+  //     amountSats,
+  //     type,
+  //     description,
+  //     expiry,
+  //     expiresAt: Date.now() + (expiry * 1000),
+  //     createdAt: Date.now(),
+  //     mock: true,
+  //     status: 'pending'
+  //   };
 
-    this.pendingInvoices.set(mockInvoice, invoiceData);
+  //   this.pendingInvoices.set(mockInvoice, invoiceData);
 
-    return {
-      paymentRequest: mockInvoice,
-      paymentHash: 'mock_hash_' + Math.random().toString(36).substr(2, 8),
-      entityId,
-      amountSats,
-      expiresAt: Date.now() + (expiry * 1000),
-      status: 'pending'
-    };
-  }
+  //   return {
+  //     paymentRequest: mockInvoice,
+  //     paymentHash: 'mock_hash_' + Math.random().toString(36).substr(2, 8),
+  //     entityId,
+  //     amountSats,
+  //     expiresAt: Date.now() + (expiry * 1000),
+  //     status: 'pending'
+  //   };
+  // }
 
   // Check if an invoice has been paid
   async checkInvoicePayment(paymentRequest) {
@@ -365,7 +365,7 @@ export const setupBillingRoutes = (app) => {
         VALUES (?, ?, ?, ?, 'pending', NOW())
       `, [appointmentId, paymentRequest, amountSats, invoiceHash]);
 
-      res.json({
+      return res.json({
         status: 'success',
         invoice: {
           id: result.insertId,
@@ -378,7 +378,7 @@ export const setupBillingRoutes = (app) => {
 
     } catch (error) {
       console.error('Error creating invoice:', error);
-      res.status(500).json({
+      return res.status(500).json({
         status: 'error',
         message: 'Failed to create invoice'
       });
