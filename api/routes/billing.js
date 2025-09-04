@@ -328,11 +328,85 @@ export const setupBillingRoutes = (app) => {
     }
   });
 
+  // Get invoice details for an appointment
+  app.get('/api/admin/billing/appointments/:appointmentId/invoice', async (req, res) => {
+    const authResult = validateAuthToken(req, res);
+    if (authResult && !authResult.success) {
+      return authResult;
+    }
+
+    let connection;
+    try {
+      const { appointmentId } = req.params;
+      
+      connection = await pool.getConnection();
+      
+      const [invoiceRows] = await connection.execute(`
+        SELECT 
+          i.*,
+          a.start_datetime,
+          a.end_datetime,
+          CONCAT(uc.first_name, ' ', uc.last_name) as customer_name,
+          uc.email as customer_email,
+          s.name as service_name,
+          s.price as service_price,
+          s.duration as service_duration
+        FROM invoices i
+        JOIN appointments a ON i.appointment_id = a.id
+        JOIN users uc ON a.id_users_customer = uc.id
+        JOIN services s ON a.id_services = s.id
+        WHERE i.appointment_id = ?
+      `, [appointmentId]);
+      
+      if (invoiceRows.length === 0) {
+        return res.status(404).json({
+          status: 'error',
+          message: 'Invoice not found for this appointment'
+        });
+      }
+      
+      const invoice = invoiceRows[0];
+      
+      return res.json({
+        status: 'success',
+        invoice: {
+          id: invoice.id,
+          appointment_id: invoice.appointment_id,
+          amount_sats: invoice.amount_sats,
+          payment_request: invoice.payment_request,
+          invoice_hash: invoice.invoice_hash,
+          status: invoice.status,
+          created_at: invoice.created_at,
+          paid_at: invoice.paid_at,
+          appointment: {
+            start_datetime: invoice.start_datetime,
+            end_datetime: invoice.end_datetime,
+            customer_name: invoice.customer_name,
+            customer_email: invoice.customer_email,
+            service_name: invoice.service_name,
+            service_price: invoice.service_price,
+            service_duration: invoice.service_duration
+          }
+        }
+      });
+      
+    } catch (error) {
+      console.error('Failed to fetch invoice:', error);
+      return res.status(500).json({
+        status: 'error',
+        message: 'Failed to fetch invoice details',
+        error: error.message
+      });
+    } finally {
+      if (connection) connection.release();
+    }
+  });
+
   // Create invoice for appointment
   app.post('/api/admin/billing/appointments/:appointmentId/invoice', async (req, res) => {
     const authResult = validateAuthToken(req, res);
     if (authResult && !authResult.success) {
-      return authResult; // This will be the error response
+      return authResult;
     }
 
     let connection;
@@ -355,22 +429,33 @@ export const setupBillingRoutes = (app) => {
         });
       }
 
-      // Create mock payment request (replace with real Lightning invoice generation)
-      const paymentRequest = `lnbc${amountSats}n1mock_${appointmentId}_${Date.now()}`;
-      const invoiceHash = 'mock_hash_' + Math.random().toString(36).substr(2, 8);
+      // Create real Lightning invoice using billingService
+      const invoice = await billingService.createAppointmentInvoice(
+        appointmentId, 
+        amountSats, 
+        description || `Appointment #${appointmentId}`,
+        3600 // 1 hour expiry
+      );
 
-      // Insert invoice
+      if (!invoice || !invoice.paymentRequest) {
+        throw new Error('Failed to create Lightning invoice');
+      }
+
+      // Extract invoice hash from payment request (you might need to adjust this based on your Lightning implementation)
+      const invoiceHash = invoice.paymentHash || 'hash_' + Math.random().toString(36).substr(2, 8);
+
+      // Insert invoice into database
       const [result] = await connection.execute(`
         INSERT INTO invoices (appointment_id, payment_request, amount_sats, invoice_hash, status, created_at)
         VALUES (?, ?, ?, ?, 'pending', NOW())
-      `, [appointmentId, paymentRequest, amountSats, invoiceHash]);
+      `, [appointmentId, invoice.paymentRequest, amountSats, invoiceHash]);
 
       return res.json({
         status: 'success',
         invoice: {
           id: result.insertId,
           appointmentId,
-          paymentRequest,
+          paymentRequest: invoice.paymentRequest,
           amount: amountSats,
           status: 'pending'
         }
@@ -380,7 +465,8 @@ export const setupBillingRoutes = (app) => {
       console.error('Error creating invoice:', error);
       return res.status(500).json({
         status: 'error',
-        message: 'Failed to create invoice'
+        message: 'Failed to create invoice',
+        details: error.message
       });
     } finally {
       if (connection) connection.release();
