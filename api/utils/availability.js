@@ -120,7 +120,7 @@ export function calculateAvailableHours(date, clientCurrentTime, clientTimezone,
 }
 
 // check an appointment time against current time
-function timeCheck(appointmentDateTime, doctorTimezone = 'UTC') {
+export function timeCheck(appointmentDateTime, doctorTimezone = 'UTC') {
   try {
     console.log('🕐 Time check debug:');
     console.log('  Appointment datetime:', appointmentDateTime);
@@ -197,8 +197,17 @@ function minutesToTime(minutes) {
 }
 
 export const generateRoomId = () => {
-  return Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
-};
+  const adjectives = ['bright', 'calm', 'gentle', 'happy', 'peaceful'];
+  const animals = ['dolphin', 'eagle', 'fox', 'owl', 'deer'];
+  const verbs = ['swimming', 'flying', 'running', 'jumping', 'dancing'];
+  
+  const adj = adjectives[Math.floor(Math.random() * adjectives.length)];
+  const animal = animals[Math.floor(Math.random() * animals.length)];
+  const verb = verbs[Math.floor(Math.random() * verbs.length)];
+  
+  // return `${adj}-${animal}-${verb}`;
+  return `bright-dolphin-swimming`;
+}
 
 export const hexToBech32 = (hex) => {
   // TODO: Implement proper hex to bech32 conversion

@@ -1,6 +1,7 @@
 import { setupProviderRoutes } from './routes/providers.js';
 import { setupAppointmentRoutes } from './routes/appointments.js';
 import { setupAdminRoutes } from './routes/admin.js';
+import { setupWebRTCRoutes } from './routes/webrtc.js';
 import { setupBillingRoutes } from './routes/billing.js';
 import { swaggerSpec } from './docs/swagger.js';
 
@@ -29,8 +30,10 @@ console.log('🔧 Setting up appointment routes...');
 setupAppointmentRoutes(app);
 console.log('🔧 Setting up admin routes...');
 setupAdminRoutes(app);
+console.log('🔧 Setting up Webrtc Routes');
+setupWebRTCRoutes(app);
+console.log('🔧 Setting up Billing Routes');
 setupBillingRoutes(app);
-console.log('✅ Billing routes initialized');
 
 console.log(`📋 Registered routes:`, {
   GET: Array.from(routes.GET.keys()),
@@ -41,6 +44,7 @@ console.log(`📋 Registered routes:`, {
 
 const server = Bun.serve({
   port: PORT,
+  idleTimeout: 255, // 255 seconds, about 4 minutes
   async fetch(req) {
     const url = new URL(req.url);
     
@@ -81,7 +85,7 @@ const server = Bun.serve({
           console.log('✅ Found matching route:', pattern);
           const reqObj = await createReq(req, url, pattern);
           const resObj = createRes(corsHeaders);
-          console.log('resObj: ', resObj);
+          // console.log('resObj: ', resObj);
           return await handler(reqObj, resObj);
         }
       }
@@ -116,12 +120,12 @@ function matchPath(pathname, pattern) {
 }
 
 async function createReq(req, url, pattern) {
-  console.log('createReq called with:');
-  console.log('  - method:', req.method);
-  console.log('  - url.pathname:', url.pathname);
-  console.log('  - pattern:', pattern);
-  console.log('  - req.headers type:', typeof req.headers);
-  console.log('  - req.headers has entries method:', typeof req.headers?.entries);
+  // console.log('createReq called with:');
+  // console.log('  - method:', req.method);
+  // console.log('  - url.pathname:', url.pathname);
+  // console.log('  - pattern:', pattern);
+  // console.log('  - req.headers type:', typeof req.headers);
+  // console.log('  - req.headers has entries method:', typeof req.headers?.entries);
 
   const params = {};
   
@@ -144,9 +148,17 @@ async function createReq(req, url, pattern) {
   console.log('  - content-type:', contentType);
   
   if (['POST', 'PUT'].includes(req.method) && contentType?.includes('application/json')) {
-    console.log('  - parsing JSON body...');
-    body = await req.json();
-    console.log('  - parsed body:', body);
+    const contentLength = req.headers.get('content-length');
+    console.log('  - content-length:', contentLength);
+  
+    if (contentLength && parseInt(contentLength) > 0) {
+      console.log('  - parsing JSON body:', req);
+      body = await req.json();
+      console.log('  - parsed body:', body);
+    } else {
+      console.log('  - empty body, skipping JSON parse');
+      body = {}
+    }
   }
 
   const headerEntries = Array.from(req.headers.entries());
@@ -163,7 +175,7 @@ async function createReq(req, url, pattern) {
     json: () => Promise.resolve(body)
   };
   
-  console.log('createReq returning object with headers:', Object.keys(reqObj.headers));
+  // console.log('createReq returning object with headers:', Object.keys(reqObj.headers));
   return reqObj;
 }
 

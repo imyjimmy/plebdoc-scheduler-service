@@ -1,6 +1,88 @@
 import { NostrWebLNProvider } from "@getalby/sdk";
+import { finalizeEvent } from 'nostr-tools/pure';
+import { SimplePool } from 'nostr-tools/pool';
+import { nip04, nip19 } from 'nostr-tools';
+import { hexToBytes } from '@noble/hashes/utils';
+
 import { pool } from '../config/database.js';
 import { validateAuthToken } from '../middleware/auth.js';
+
+// Helper function for sending payment requests via Nostr DM (copied from admin-routes.js)
+async function sendInvoiceDM(patientPubkey, invoiceData) {
+  try {
+    // Check if admin has Nostr keys configured
+    const adminPrivateKeyInput = process.env.ADMIN_NOSTR_PRIVATE_KEY;
+    if (!adminPrivateKeyInput) {
+      console.log('ADMIN_NOSTR_PRIVATE_KEY not configured, cannot send DMs');
+      throw new Error('ADMIN_NOSTR_PRIVATE_KEY not configured');
+    }
+
+    // Convert hex string to Uint8Array (32 bytes)
+    let adminPrivateKey;
+  
+    // Handle both nsec and hex formats
+    if (adminPrivateKeyInput.startsWith('nsec')) {
+      // Convert nsec to hex then to bytes
+      const { data: hexKey } = nip19.decode(adminPrivateKeyInput);
+      console.log('hexKey: ', hexKey);
+      adminPrivateKey = hexKey;
+    } else {
+      // Pad hex to 64 characters if needed (add leading zero)
+      const paddedHex = adminPrivateKeyInput.padStart(64, '0');
+      adminPrivateKey = hexToBytes(paddedHex);
+    }
+
+    console.log('Sending invoice DM, payment request:', invoiceData.payment_request.substring(0, 20) + '...');
+    
+    // Create invoice DM content
+    const dmContent = JSON.stringify({
+      type: 'lightning_invoice',
+      version: '1.0',
+      invoice: {
+        payment_request: invoiceData.payment_request,
+        amount_sats: invoiceData.amount_sats,
+        service: invoiceData.service_name,
+        appointment_date: invoiceData.start_datetime,
+        status: invoiceData.status
+      },
+      message: `Invoice for your ${invoiceData.service_name} appointment\n\nAmount: ${invoiceData.amount_sats} sats\nPayment Request: ${invoiceData.payment_request}\n\nPlease pay this invoice to complete your appointment payment.`
+    });
+
+    // Encrypt the DM content
+    const encryptedContent = await nip04.encrypt(adminPrivateKey, patientPubkey, dmContent);
+
+    // Create and finalize the DM event (v2+ syntax)
+    const eventTemplate = {
+      kind: 4, // Encrypted Direct Message
+      created_at: Math.floor(Date.now() / 1000),
+      tags: [['p', patientPubkey]],
+      content: encryptedContent
+    };
+
+    // finalizeEvent calculates pubkey, id, and signature in one step
+    const signedEvent = finalizeEvent(eventTemplate, adminPrivateKey);
+
+    // Send to Nostr relays
+    const pool = new SimplePool();
+    const relays = [
+      'wss://relay.damus.io',
+      'wss://nos.lol', 
+      'wss://relay.snort.social'
+    ];
+
+    console.log(`Sending invoice DM to patient ${patientPubkey.substring(0, 8)}...`);
+    
+    // Use Promise.any instead of Promise.allSettled for better error handling
+    await Promise.any(pool.publish(relays, signedEvent));
+    
+    console.log('Invoice DM sent successfully');
+    pool.close(relays);
+
+  } catch (error) {
+    console.error('Failed to send payment request DM:', error);
+    throw error;
+  }
+}
 
 class BillingService {
   constructor(nwcConnectionString) {
@@ -473,6 +555,105 @@ export const setupBillingRoutes = (app) => {
     }
   });
 
+  //DM nostr user with invoice
+  app.post('/api/admin/billing/appointments/:appointmentId/send-dm', async (req, res) => {
+    const authResult = validateAuthToken(req, res);
+    if (authResult && !authResult.success) {
+      return authResult;
+    }
+
+    let connection;
+    try {
+      const { appointmentId } = req.params;
+      
+      connection = await pool.getConnection();
+      
+      // Get appointment and invoice details
+      const [rows] = await connection.execute(`
+        SELECT 
+          i.payment_request,
+          i.amount_sats,
+          i.status,
+          a.start_datetime,
+          CONCAT(uc.first_name, ' ', uc.last_name) as customer_name,
+          uc.email as customer_email,
+          uc.nostr_pubkey,
+          s.name as service_name
+        FROM invoices i
+        JOIN appointments a ON i.appointment_id = a.id
+        JOIN users uc ON a.id_users_customer = uc.id
+        JOIN services s ON a.id_services = s.id
+        WHERE i.appointment_id = ?
+      `, [appointmentId]);
+      
+      console.log('rows:', rows);
+      if (rows.length === 0) {
+        return res.status(404).json({
+          status: 'error',
+          message: 'Invoice not found for this appointment'
+        });
+      }
+      
+      const invoice = rows[0];
+      console.log('invoice:', invoice)
+
+      if (!invoice.nostr_pubkey) {
+        return res.status(400).json({
+          status: 'error',
+          message: 'Patient does not have a Nostr pubkey registered'
+        });
+      }
+
+      // Create DM content
+      const dmContent = {
+        type: 'lightning_invoice',
+        version: '1.0',
+        invoice: {
+          payment_request: invoice.payment_request,
+          amount_sats: invoice.amount_sats,
+          service: invoice.service_name,
+          appointment_date: invoice.start_datetime,
+          status: invoice.status
+        },
+        message: `Invoice for your ${invoice.service_name} appointment\n\nAmount: ${invoice.amount_sats} sats\nPayment Request: ${invoice.payment_request}\n\nPlease pay this invoice to complete your appointment payment.`
+      };
+
+      console.log('Would send DM to:', invoice.nostr_pubkey);
+      console.log('DM Content:', dmContent);
+      
+      // sends invoice via NOSTR DMs
+      try {
+        await sendInvoiceDM(invoice.nostr_pubkey, {
+          payment_request: invoice.payment_request,
+          amount_sats: invoice.amount_sats,
+          service_name: invoice.service_name,
+          start_datetime: invoice.start_datetime,
+          status: invoice.status
+        });
+      } catch (dmError) {
+        console.error('Failed to send DM:', dmError);
+        return res.status(500).json({
+          status: 'error',
+          message: 'Failed to send DM: ' + dmError.message
+        });
+      }
+      
+      return res.json({
+        status: 'success',
+        message: `Invoice DM sent to ${invoice.customer_name}`
+      });
+      
+    } catch (error) {
+      console.error('Failed to send invoice DM:', error);
+      return res.status(500).json({
+        status: 'error',
+        message: 'Failed to send invoice DM',
+        error: error.message
+      });
+    } finally {
+      if (connection) connection.release();
+    }
+  });
 };
 
 // Export the billing service instance for use in other modules

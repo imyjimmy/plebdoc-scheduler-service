@@ -4,15 +4,16 @@ const JWT_SECRET = process.env.JWT_SECRET;
 
 export const validateAuthToken = (req, res) => {
   try {
-    console.log('validateAuthToken called with req type:', typeof req);
-    console.log('req object keys:', Object.keys(req || {}));
-    console.log('req.headers type:', typeof req?.headers);
-    console.log('req.headers value:', req?.headers);
+    // console.log('validateAuthToken called with req type:', typeof req);
+    // console.log('req object keys:', Object.keys(req || {}));
+    // console.log('req.headers type:', typeof req?.headers);
+    // console.log('req.headers value:', req?.headers);
     
     const authHeader = req.headers?.authorization;
     console.log('authHeader:', authHeader);
 
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      console.log('about to return success false, no token provided');
       return { success: false, error: 'No token provided' };
     }
 
@@ -22,6 +23,6 @@ export const validateAuthToken = (req, res) => {
     return { success: true, user: decoded };
   } catch (error) {
     console.error('Token validation failed:', error);
-    return { success: false, error: 'Invalid token' };
+    return { success: false, error: 'Failed Auth Check, Invalid Token' };
   }
 };
