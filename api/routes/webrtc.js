@@ -192,19 +192,34 @@ export function setupWebRTCRoutes(app) {
         }
       } else {
         const room = sessionManager.getRoom(roomId);
-        let joinOrder = 1;
-
+        
+        let shouldInitiateOffer = false;
+        
         if (room) {
-          const participantArray = Array.from(room.participants.values())
-            .sort((a, b) => a.joinedAt - b.joinedAt); // Sort by join time
-          joinOrder = participantArray.findIndex(p => p.pubkey === pubkey) + 1;
+          // Count currently connected participants (excluding the joining participant)
+          const currentlyConnectedParticipants = Array.from(room.participants.values())
+            .filter(p => p.status === 'connected' && p.pubkey !== pubkey);
+          
+          const connectedCount = currentlyConnectedParticipants.length;
+          
+          console.log(`Currently connected participants (excluding joiner): ${connectedCount}`);
+          
+          // If there are existing connected participants, this joiner should be the caller
+          if (connectedCount > 0) {
+            shouldInitiateOffer = true;
+            console.log(`🔥 ROLE ASSIGNMENT: ${pubkey} will be CALLER (existing connected participants found)`);
+          } else {
+            shouldInitiateOffer = false;
+            console.log(`🔥 ROLE ASSIGNMENT: ${pubkey} will be ANSWERER (first connected participant)`);
+          }
+        } else {
+          // New room, first participant
+          shouldInitiateOffer = true;
+          console.log(`🔥 ROLE ASSIGNMENT: ${pubkey} will be ANSWERER (new room, first participant)`);
         }
-
-        const shouldInitiateOffer = joinOrder === 1;
 
         joinResult = sessionManager.handleParticipantJoin(roomId, pubkey);
         console.log(`Join result:`, joinResult);
-        console.log(`Join order: ${joinOrder}`);
         console.log(`Should initiate offer: ${shouldInitiateOffer}`);
         console.log(`Is rejoin: ${joinResult.isRejoin}`);
         
@@ -216,8 +231,7 @@ export function setupWebRTCRoutes(app) {
           status: 'joined', // Always return 'joined', never 'rejoined'
           participants: joinResult.participantCount,
           roomInfo: joinResult.roomInfo,
-          joinOrder: joinOrder,
-          shouldInitiateOffer: shouldInitiateOffer
+          shouldInitiateOffer: shouldInitiateOffer // ✅ Use the new logic
         });
       }
     } catch (error) {
