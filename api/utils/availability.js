@@ -39,7 +39,7 @@ export function calculateAvailableHours(date, clientCurrentTime, clientTimezone,
     let currentMinutes = 0;
     if (isToday && clientCurrentTime) {
       const [hours, minutes] = clientCurrentTime.split(':');
-      currentMinutes = parseInt(hours) * 60 + parseInt(minutes) + 15; // 15 min buffer
+      currentMinutes = parseInt(hours) * 60 + parseInt(minutes) + 2; // 2 min buffer
     }
 
     console.log('🕐 Time filtering info:');
@@ -195,6 +195,25 @@ function minutesToTime(minutes) {
   const mins = minutes % 60;
   return `${hours.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}`;
 }
+
+// export const isDST = () => {
+//   const now = new Date();
+//   const january = new Date(now.getFullYear(), 0, 1); // January 1st of the current year
+//   const july = new Date(now.getFullYear(), 6, 1);    // July 1st of the current year
+
+//   const janOffset = january.getTimezoneOffset();
+//   const julOffset = july.getTimezoneOffset();
+//   const currentOffset = now.getTimezoneOffset();
+
+//   // In the Northern Hemisphere, DST typically means a smaller (more negative) offset.
+//   // In the Southern Hemisphere, DST typically means a smaller (more negative) offset as well,
+//   // but the standard time might be during their winter (our summer).
+//   // The key is that the offset during DST will be different from the standard offset.
+
+//   // We find the maximum of the two offsets (Jan and Jul) to represent the standard time offset.
+//   // If the current offset is different from this standard offset, it indicates DST.
+//   return Math.max(janOffset, julOffset) !== currentOffset;
+// }
 
 export const generateRoomId = () => {
   const adjectives = ['bright', 'calm', 'gentle', 'happy', 'peaceful'];

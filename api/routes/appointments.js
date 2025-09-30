@@ -135,8 +135,19 @@ export const setupAppointmentRoutes = (app) => {
         }
 
         const durationMinutes = serviceResult[0].duration;
-        const startTime = new Date(bookingData.startTime);
-        const endTime = new Date(startTime.getTime() + (durationMinutes * 60000));
+
+        // Central Standard Time (CST) = UTC-6, Central Daylight Time (CDT) = UTC-5
+        const centralTime = new Date(bookingData.startTime);
+        const january = new Date(centralTime.getFullYear(), 0, 1);
+        const july = new Date(centralTime.getFullYear(), 6, 1);
+        
+        const isDST = bookingData.isDST;
+        console.log('isDST: ', isDST);
+
+        const hoursToAdd = isDST ? 5 : 6; // CDT = +5, CST = +6
+        
+        const utcStartTime = new Date(centralTime.getTime() + (hoursToAdd * 60 * 60 * 1000)); // Add 6 hours for CST
+        const utcEndTime = new Date(utcStartTime.getTime() + (durationMinutes * 60000));
 
         // Create appointment
         const [appointmentResult] = await connection.execute(
@@ -149,8 +160,8 @@ export const setupAppointmentRoutes = (app) => {
             bookingData.providerId,
             customerId,
             bookingData.serviceId,
-            startTime.toISOString().slice(0, 19).replace('T', ' '),
-            endTime.toISOString().slice(0, 19).replace('T', ' '),
+            utcStartTime.toISOString().slice(0, 19).replace('T', ' '),
+            utcEndTime.toISOString().slice(0, 19).replace('T', ' '),
             bookingData.patientInfo.notes || null,
             Math.random().toString(36).substring(7), // Simple hash,
             utils.generateRoomId()
@@ -246,6 +257,79 @@ export const setupAppointmentRoutes = (app) => {
     } catch (error) {
       console.error('Token validation error:', error);
       res.status(500).json({ error: 'Token validation failed' });
+    }
+  });
+
+  // get upcoming appointments for a given provider
+  app.get('/api/admin/appointments', async (req, res) => {
+    const authResult = validateAuthToken(req, res);
+    if (authResult && !authResult.success) {
+      return authResult; // This will be the error response
+    }
+
+    let connection;
+    try {
+      console.log('req:', req, 'user: ', req.user);
+      const { pubkey } = req.user; // From JWT token
+      
+      connection = await pool.getConnection();
+      
+      // First get the provider's user ID from their pubkey
+      const [providerRows] = await connection.execute(`
+        SELECT id FROM users WHERE nostr_pubkey = ? AND id_roles IN (2, 5)
+      `, [pubkey]);
+      
+      if (providerRows.length === 0) {
+        connection.release();
+        return res.status(404).json({
+          status: 'error',
+          message: 'Provider not found'
+        });
+      }
+      
+      const providerId = providerRows[0].id;
+      
+      // Get appointments for this provider with related data
+      const [appointments] = await connection.execute(`
+        SELECT 
+          a.id,
+          a.start_datetime,
+          a.end_datetime,
+          a.notes,
+          a.status,
+          a.location,
+          s.name as service_name,
+          s.duration as service_duration,
+          s.color as service_color,
+          CONCAT(c.first_name, ' ', c.last_name) as customer_name,
+          c.email as customer_email,
+          c.phone_number as customer_phone,
+          i.status as invoice_status,
+          i.amount_sats as invoice_amount
+        FROM appointments a
+        LEFT JOIN services s ON a.id_services = s.id
+        LEFT JOIN users c ON a.id_users_customer = c.id
+        LEFT JOIN invoices i ON a.id = i.appointment_id
+        WHERE a.id_users_provider = ?
+        ORDER BY a.start_datetime ASC
+      `, [providerId]);
+      
+      connection.release();
+      
+      return res.json({
+        status: 'success',
+        appointments: appointments
+      });
+      
+    } catch (error) {
+      console.error('Failed to fetch appointments:', error);
+      return res.status(500).json({
+        status: 'error',
+        message: 'Failed to fetch appointments',
+        error: error.message
+      });
+    } finally {
+      if (connection) connection.release();
     }
   });
 
