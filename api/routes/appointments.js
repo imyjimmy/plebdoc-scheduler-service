@@ -138,8 +138,6 @@ export const setupAppointmentRoutes = (app) => {
 
         // Central Standard Time (CST) = UTC-6, Central Daylight Time (CDT) = UTC-5
         const centralTime = new Date(bookingData.startTime);
-        const january = new Date(centralTime.getFullYear(), 0, 1);
-        const july = new Date(centralTime.getFullYear(), 6, 1);
         
         const isDST = bookingData.isDST;
         console.log('isDST: ', isDST);
@@ -150,6 +148,7 @@ export const setupAppointmentRoutes = (app) => {
         const utcEndTime = new Date(utcStartTime.getTime() + (durationMinutes * 60000));
 
         // Create appointment
+        const roomId = utils.generateRoomId();
         const [appointmentResult] = await connection.execute(
           `INSERT INTO appointments (
             id_users_provider, id_users_customer, id_services, 
@@ -164,7 +163,7 @@ export const setupAppointmentRoutes = (app) => {
             utcEndTime.toISOString().slice(0, 19).replace('T', ' '),
             bookingData.patientInfo.notes || null,
             Math.random().toString(36).substring(7), // Simple hash,
-            utils.generateRoomId()
+            roomId
           ]
         );
 
@@ -173,6 +172,7 @@ export const setupAppointmentRoutes = (app) => {
         return res.json({ 
           status: 'OK',
           appointmentId: appointmentResult.insertId,
+          roomId: roomId,
           message: 'Appointment created successfully'
         });
         

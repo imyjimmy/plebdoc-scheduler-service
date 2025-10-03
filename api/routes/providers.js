@@ -1,4 +1,5 @@
 import { pool } from '../config/database.js';
+import { validateAuthToken } from '../middleware/auth.js';
 import * as utils from '../utils/availability.js';
 
 export const setupProviderRoutes = (app) => {
@@ -143,6 +144,185 @@ export const setupProviderRoutes = (app) => {
       return res.status(500).json({ error: 'Failed to fetch availability' });
     } finally {
       if (connection) connection.release();
+    }
+  });
+
+  // GET provider profile PUBLIC endpoint by username
+  app.get('/api/admin/provider/:username/profile', async (req, res) => {
+    try {
+      const { username } = req.params;
+      const connection = await pool.getConnection();
+
+      // 1. Fetch provider profile via username
+      const [rows] = await connection.execute(
+        `SELECT * FROM provider_profiles WHERE username = ?`,
+        [username]
+      );
+      
+      connection.release();
+
+      if (rows.length === 0) {
+        return res.status(404).json({
+          status: 'error',
+          message: 'Provider profile not found'
+        });
+      }
+
+      // Transform snake_case to camelCase
+      const profileData = rows[0];
+      const camelCaseProfile = {
+        userId: profileData.user_id,
+        username: profileData.username,
+        firstName: profileData.first_name,
+        lastName: profileData.last_name,
+        suffix: profileData.suffix,
+        licenseNumber: profileData.license_number,
+        licenseState: profileData.license_state,
+        licenseIssuedDate: profileData.license_issued_date,
+        licenseExpirationDate: profileData.license_expiration_date,
+        registrationStatus: profileData.registration_status,
+        registrationDate: profileData.registration_date,
+        methodOfLicensure: profileData.method_of_licensure,
+        medicalSchool: profileData.medical_school,
+        graduationYear: profileData.graduation_year,
+        degreeType: profileData.degree_type,
+        primarySpecialty: profileData.primary_specialty,
+        secondarySpecialty: profileData.secondary_specialty,
+        yearOfBirth: profileData.year_of_birth,
+        placeOfBirth: profileData.place_of_birth,
+        gender: profileData.gender,
+        bio: profileData.bio,
+        createdAt: profileData.created_at,
+        updatedAt: profileData.updated_at
+      };
+
+      return res.json({
+        status: 'success',
+        profile: camelCaseProfile
+      });
+      
+    } catch (error) {
+      console.error('Failed to load provider profile:', error);
+      return res.status(500).json({
+        status: 'error',
+        message: 'Failed to load profile',
+        error: error.message
+      });
+    }
+  });
+
+  // POST (insert or update) provider profile
+  app.post('/api/admin/provider/profile', async (req, res) => {
+    const authResult = validateAuthToken(req, res);
+    if (!authResult.success) {
+      return res.status(401).json({ error: authResult.error });
+    }
+
+    try {
+      const { pubkey } = req.user;
+      const connection = await pool.getConnection();
+
+      // 1. Map pubkey → user_id
+      const [userRows] = await connection.execute(
+        `SELECT id FROM users WHERE nostr_pubkey = ? AND id_roles IN (2, 5)`,
+        [pubkey]
+      );
+      if (userRows.length === 0) {
+        connection.release();
+        return res.status(404).json({ status: 'error', message: 'Provider not found' });
+      }
+      const userId = userRows[0].id;
+
+      // 2. Gather fields from body (sanitize/validate in production!)
+      const {
+        username,
+        first_name,
+        last_name,
+        suffix,
+        license_number,
+        license_state,
+        license_issued_date,
+        license_expiration_date,
+        registration_status,
+        registration_date,
+        method_of_licensure,
+        medical_school,
+        graduation_year,
+        degree_type,
+        primary_specialty,
+        secondary_specialty,
+        year_of_birth,
+        place_of_birth,
+        gender,
+      } = req.body;
+
+      const toNull = (value) => value === undefined ? null : value;
+
+      // 3. Upsert into provider_profiles
+      await connection.execute(
+        `
+        INSERT INTO provider_profiles (
+          user_id, username, first_name, last_name, suffix,
+          license_number, license_state, license_issued_date, license_expiration_date,
+          registration_status, registration_date, method_of_licensure,
+          medical_school, graduation_year, degree_type,
+          primary_specialty, secondary_specialty,
+          year_of_birth, place_of_birth, gender
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON DUPLICATE KEY UPDATE
+          username = VALUES(username),
+          first_name = VALUES(first_name),
+          last_name = VALUES(last_name),
+          suffix = VALUES(suffix),
+          license_number = VALUES(license_number),
+          license_state = VALUES(license_state),
+          license_issued_date = VALUES(license_issued_date),
+          license_expiration_date = VALUES(license_expiration_date),
+          registration_status = VALUES(registration_status),
+          registration_date = VALUES(registration_date),
+          method_of_licensure = VALUES(method_of_licensure),
+          medical_school = VALUES(medical_school),
+          graduation_year = VALUES(graduation_year),
+          degree_type = VALUES(degree_type),
+          primary_specialty = VALUES(primary_specialty),
+          secondary_specialty = VALUES(secondary_specialty),
+          year_of_birth = VALUES(year_of_birth),
+          place_of_birth = VALUES(place_of_birth),
+          gender = VALUES(gender)
+        `,
+        [
+          userId,
+          toNull(username),
+          toNull(first_name),
+          toNull(last_name),
+          toNull(suffix),
+          toNull(license_number),
+          toNull(license_state),
+          toNull(license_issued_date),
+          toNull(license_expiration_date),
+          toNull(registration_status),
+          toNull(registration_date),
+          toNull(method_of_licensure),
+          toNull(medical_school),
+          toNull(graduation_year),
+          toNull(degree_type),
+          toNull(primary_specialty),
+          toNull(secondary_specialty),
+          toNull(year_of_birth),
+          toNull(place_of_birth),
+          toNull(gender),
+        ]
+      );
+
+      connection.release();
+      return res.json({ status: 'success', message: 'Profile saved successfully' });
+    } catch (error) {
+      console.error('Failed to save provider profile:', error);
+      return res.status(500).json({
+        status: 'error',
+        message: 'Failed to save profile',
+        error: error.message,
+      });
     }
   });
 };

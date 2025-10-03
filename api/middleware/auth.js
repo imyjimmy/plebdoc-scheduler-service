@@ -26,3 +26,37 @@ export const validateAuthToken = (req, res) => {
     return { success: false, error: 'Failed Auth Check, Invalid Token' };
   }
 };
+
+export const validateGuestAccess = async (req) => {
+  const { roomId } = req.params;
+  
+  try {
+    const connection = await pool.getConnection();
+    const [appointments] = await connection.execute(
+      'SELECT id, start_datetime, end_datetime FROM appointments WHERE location = ?',
+      [roomId]
+    );
+    connection.release();
+    
+    if (!Array.isArray(appointments) || appointments.length === 0) {
+      return { valid: false, error: 'Invalid meeting room' };
+    }
+    
+    const appointment = appointments[0];
+    const now = new Date();
+    const startTime = new Date(appointment.start_datetime);
+    const endTime = new Date(appointment.end_datetime);
+    
+    const accessStart = new Date(startTime.getTime() - 15 * 60 * 1000);
+    const accessEnd = new Date(endTime.getTime() + 120 * 60 * 1000);
+    
+    if (now < accessStart || now > accessEnd) {
+      return { valid: false, error: 'Meeting not accessible at this time' };
+    }
+    
+    return { valid: true };
+  } catch (error) {
+    console.error('Guest access validation error:', error);
+    return { valid: false, error: 'Server error' };
+  }
+};

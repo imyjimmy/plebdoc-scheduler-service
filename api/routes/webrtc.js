@@ -2,9 +2,9 @@ const { generateRoomId } = require('../utils/availability');
 const sessionManager = require('../utils/webrtc-session-management');
 const { pool } = require('../config/database');
 const { timeCheck } = require('../utils/availability');
-const { validateAuthToken } = require('../middleware/auth');
+const { validateAuthToken, validateGuestAccess } = require('../middleware/auth');
 
-const BASE_URL = process.env.BASE_URL || 'https://plebemr.com';
+const BASE_URL = process.env.BASE_URL || 'https://plebdoc.com';
 
 // In-memory storage for signaling (use Redis in production)
 const sseConnections = new Map(); // roomId -> Set of SSE response objects
@@ -148,13 +148,28 @@ export function setupWebRTCRoutes(app) {
   });
   
   app.post('/api/webrtc/rooms/:roomId/join', async (req, res) => {
-    const authResult = validateAuthToken(req, res);
-    if (authResult && !authResult.success) {
-      return authResult;
-    }
-
     const { roomId } = req.params;
     const { pubkey } = req.user;
+    const isGuest = req.query.guest === 'true';
+    
+    let userIdentifier;
+    
+    if (!isGuest) {
+      const authResult = validateAuthToken(req, res);
+      if (authResult && !authResult.success) {
+        return authResult;
+      }
+      userIdentifier = pubkey;
+    } else {
+      const guestCheck = await validateGuestAccess(req);
+      if (!guestCheck.valid) {
+        return res.status(403).json({
+          success: false,
+          error: guestCheck.error || 'Unauthorized'
+        });
+      }
+      userIdentifier = `guest-room-${roomId}`;
+    }
 
     console.log(`=== JOIN ROOM REQUEST ===`);
     console.log(`Room ID: ${roomId}`);
@@ -242,13 +257,28 @@ export function setupWebRTCRoutes(app) {
   });
 
   app.post('/api/webrtc/rooms/:roomId/leave', async (req, res) => {
-    const authResult = validateAuthToken(req, res);
-    if (authResult && !authResult.success) {
-      return authResult;
-    }
-
     const { roomId } = req.params;
     const { pubkey } = req.user;
+    const isGuest = req.query.guest === 'true';
+
+    let userIdentifier;
+    
+    if (!isGuest) {
+      const authResult = validateAuthToken(req, res);
+      if (authResult && !authResult.success) {
+        return authResult;
+      }
+      userIdentifier = pubkey;
+    } else {
+      const guestCheck = await validateGuestAccess(req);
+      if (!guestCheck.valid) {
+        return res.status(403).json({
+          success: false,
+          error: guestCheck.error || 'Unauthorized'
+        });
+      }
+      userIdentifier = `guest-room-${roomId}`;
+    }
     
     console.log(`=== LEAVE ROOM REQUEST ===`);
     console.log(`Room ID: ${roomId}`);
@@ -277,9 +307,21 @@ export function setupWebRTCRoutes(app) {
   });
 
   app.post('/api/webrtc/rooms/:roomId/reset-connection', async (req, res) => {
-    const authResult = validateAuthToken(req, res);
-    if (authResult && !authResult.success) {
-      return authResult;
+    const isGuest = req.query.guest === 'true';
+    
+    if (!isGuest) {
+      const authResult = validateAuthToken(req, res);
+      if (authResult && !authResult.success) {
+        return authResult;
+      }
+    } else {
+      const guestCheck = await validateGuestAccess(req);
+      if (!guestCheck.valid) {
+        return res.status(403).json({
+          success: false,
+          error: guestCheck.error || 'Unauthorized'
+        });
+      }
     }
 
     const { roomId } = req.params;
@@ -303,14 +345,29 @@ export function setupWebRTCRoutes(app) {
   });
 
   app.post('/api/webrtc/rooms/:roomId/offer', async (req, res) => {
-    const authResult = validateAuthToken(req, res);
-    if (authResult && !authResult.success) {
-      return authResult;
-    }
-
     const { roomId } = req.params;
-    const { offer } = req.body;
     const { pubkey } = req.user;
+    const { offer } = req.body;
+    const isGuest = req.query.guest === 'true';
+    
+    let userIdentifier;
+    
+    if (!isGuest) {
+      const authResult = validateAuthToken(req, res);
+      if (authResult && !authResult.success) {
+        return authResult;
+      }
+      userIdentifier = pubkey;
+    } else {
+      const guestCheck = await validateGuestAccess(req);
+      if (!guestCheck.valid) {
+        return res.status(403).json({
+          success: false,
+          error: guestCheck.error || 'Unauthorized'
+        });
+      }
+      userIdentifier = `guest-room-${roomId}`;
+    }
     
     try {
       const room = sessionManager.getRoom(roomId);
@@ -327,9 +384,21 @@ export function setupWebRTCRoutes(app) {
   });
 
   app.get('/api/webrtc/rooms/:roomId/offer', async (req, res) => {
-    const authResult = validateAuthToken(req, res);
-    if (authResult && !authResult.success) {
-      return authResult;
+    const isGuest = req.query.guest === 'true';
+    
+    if (!isGuest) {
+      const authResult = validateAuthToken(req, res);
+      if (authResult && !authResult.success) {
+        return authResult;
+      }
+    } else {
+      const guestCheck = await validateGuestAccess(req);
+      if (!guestCheck.valid) {
+        return res.status(403).json({
+          success: false,
+          error: guestCheck.error || 'Unauthorized'
+        });
+      }
     }
 
     const { roomId } = req.params;
@@ -343,32 +412,29 @@ export function setupWebRTCRoutes(app) {
     }
   });
 
-  app.get('/api/webrtc/rooms/:roomId/answer', (req, res) => {
-    // Extract token and validate
-    const token = req.headers.authorization?.split(' ')[1];
-    if (token) {
+  app.post('/api/webrtc/rooms/:roomId/answer', async (req, res) => {
+    const { roomId } = req.params;
+    const { answer } = req.body;
+    const { pubkey } = req.user;
+    const isGuest = req.query.guest === 'true';
+
+    if (!isGuest) {
       const authResult = validateAuthToken(req, res);
       if (authResult && !authResult.success) {
         return authResult;
       }
+      userIdentifier = pubkey;
+    } else {
+      const guestCheck = await validateGuestAccess(req);
+      if (!guestCheck.valid) {
+        return res.status(403).json({
+          success: false,
+          error: guestCheck.error || 'Unauthorized'
+        });
+      }
+      userIdentifier = `guest-room-${roomId}`;
     }
 
-    const { roomId } = req.params;
-    const room = sessionManager.getRoom(roomId);
-    
-    return res.json({ answer: room?.pendingAnswer || null });
-  });
-
-  app.post('/api/webrtc/rooms/:roomId/answer', async (req, res) => {
-    const authResult = validateAuthToken(req, res);
-    if (authResult && !authResult.success) {
-      return authResult;
-    }
-
-    const { roomId } = req.params;
-    const { answer } = req.body;
-    const { pubkey } = req.user;
-    
     try {
       const room = sessionManager.getRoom(roomId);
       if (!room) {
@@ -385,9 +451,21 @@ export function setupWebRTCRoutes(app) {
   });
 
   app.get('/api/webrtc/rooms/:roomId/answer', async (req, res) => {
-    const authResult = validateAuthToken(req, res);
-    if (authResult && !authResult.success) {
-      return authResult;
+    const isGuest = req.query.guest === 'true';
+    
+    if (!isGuest) {
+      const authResult = validateAuthToken(req, res);
+      if (authResult && !authResult.success) {
+        return authResult;
+      }
+    } else {
+      const guestCheck = await validateGuestAccess(req);
+      if (!guestCheck.valid) {
+        return res.status(403).json({
+          success: false,
+          error: guestCheck.error || 'Unauthorized'
+        });
+      }
     }
 
     const { roomId } = req.params;
@@ -402,14 +480,29 @@ export function setupWebRTCRoutes(app) {
   });
 
   app.post('/api/webrtc/rooms/:roomId/ice-candidate', async (req, res) => {
-    const authResult = validateAuthToken(req, res);
-    if (authResult && !authResult.success) {
-      return authResult;
-    }
-
     const { roomId } = req.params;
     const { candidate } = req.body;
     const { pubkey } = req.user;
+    const isGuest = req.query.guest === 'true';
+    
+    let userIdentifier;
+    
+    if (!isGuest) {
+      const authResult = validateAuthToken(req, res);
+      if (authResult && !authResult.success) {
+        return authResult;
+      }
+      userIdentifier = pubkey;
+    } else {
+      const guestCheck = await validateGuestAccess(req);
+      if (!guestCheck.valid) {
+        return res.status(403).json({
+          success: false,
+          error: guestCheck.error || 'Unauthorized'
+        });
+      }
+      userIdentifier = `guest-room-${roomId}`;
+    }
     
     try {
       const room = sessionManager.getRoom(roomId);
@@ -428,14 +521,29 @@ export function setupWebRTCRoutes(app) {
   });
 
   app.get('/api/webrtc/rooms/:roomId/ice-candidates', async (req, res) => {
-    const authResult = validateAuthToken(req, res);
-    if (authResult && !authResult.success) {
-      return authResult;
-    }
-
     const { roomId } = req.params;
+    const isGuest = req.query.guest === 'true';
     const { pubkey } = req.user;
     
+    let userIdentifier;
+    
+    if (!isGuest) {
+      const authResult = validateAuthToken(req, res);
+      if (authResult && !authResult.success) {
+        return authResult;
+      }
+      userIdentifier = pubkey;
+    } else {
+      const guestCheck = await validateGuestAccess(req);
+      if (!guestCheck.valid) {
+        return res.status(403).json({
+          success: false,
+          error: guestCheck.error || 'Unauthorized'
+        });
+      }
+      userIdentifier = `guest-room-${roomId}`;
+    }
+
     try {
       const room = sessionManager.getRoom(roomId);
       
@@ -460,15 +568,18 @@ export function setupWebRTCRoutes(app) {
   app.get('/api/webrtc/rooms/:roomId/events', (req, res) => {
     console.log('/api/webrtc/rooms/:roomId/events, roomId:', req.params.roomId);
 
-    // Extract token from query param for SSE and set it in the header for validateAuthToken
-    const token = req.query.token;
-    if (token) {
-      req.headers.authorization = `Bearer ${token}`;
-    }
+    const isGuest = req.query.guest === 'true';
+    if (!isGuest) {
+      // Extract token from query param for SSE and set it in the header for validateAuthToken
+      const token = req.query.token;
+      if (token) {
+        req.headers.authorization = `Bearer ${token}`;
+      }
     
-    const authResult = validateAuthToken(req, res);
-    if (authResult && !authResult.success) {
-      return authResult;
+      const authResult = validateAuthToken(req, res);
+      if (authResult && !authResult.success) {
+        return authResult;
+      }
     }
     
     try { 
