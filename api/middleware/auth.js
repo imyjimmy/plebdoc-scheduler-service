@@ -1,4 +1,5 @@
 import jwt from 'jsonwebtoken';
+const { pool } = require('../config/database');
 
 const JWT_SECRET = process.env.JWT_SECRET;
 

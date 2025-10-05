@@ -149,9 +149,7 @@ export function setupWebRTCRoutes(app) {
   
   app.post('/api/webrtc/rooms/:roomId/join', async (req, res) => {
     const { roomId } = req.params;
-    const { pubkey } = req.user;
     const isGuest = req.query.guest === 'true';
-    
     let userIdentifier;
     
     if (!isGuest) {
@@ -159,7 +157,7 @@ export function setupWebRTCRoutes(app) {
       if (authResult && !authResult.success) {
         return authResult;
       }
-      userIdentifier = pubkey;
+      userIdentifier = req.user.pubkey;
     } else {
       const guestCheck = await validateGuestAccess(req);
       if (!guestCheck.valid) {
@@ -173,20 +171,33 @@ export function setupWebRTCRoutes(app) {
 
     console.log(`=== JOIN ROOM REQUEST ===`);
     console.log(`Room ID: ${roomId}`);
-    console.log(`User pubkey: ${pubkey}`);
+    console.log(`User pubkey or identifier: ${userIdentifier}`);
     console.log(`Timestamp: ${new Date().toISOString()}`);
 
     let connection;
     
     try {
       connection = await pool.getConnection();
+      let rows;
 
-      const [rows] = await connection.execute(`
-      SELECT a.*, u.nostr_pubkey, u.timezone 
-      FROM appointments a 
-      JOIN users u ON (u.id = a.id_users_provider OR u.id = a.id_users_customer)
-      WHERE a.location = ? AND u.nostr_pubkey = ?
-      `, [roomId, pubkey]);
+      if (!isGuest) {
+        // Authenticated user - check they're authorized for this specific room
+        [rows] = await connection.execute(`
+          SELECT a.*, u.nostr_pubkey, u.timezone 
+          FROM appointments a 
+          JOIN users u ON (u.id = a.id_users_provider OR u.id = a.id_users_customer)
+          WHERE a.location = ? AND u.nostr_pubkey = ?
+        `, [roomId, userIdentifier]);
+      } else {
+        // Guest - just verify the room exists (already validated by validateGuestAccess)
+        [rows] = await connection.execute(`
+          SELECT a.*, u.nostr_pubkey, u.timezone 
+          FROM appointments a 
+          JOIN users u ON (u.id = a.id_users_provider OR u.id = a.id_users_customer)
+          WHERE a.location = ?
+          LIMIT 1
+        `, [roomId]);
+      }
 
       let joinResult; 
 
@@ -213,7 +224,7 @@ export function setupWebRTCRoutes(app) {
         if (room) {
           // Count currently connected participants (excluding the joining participant)
           const currentlyConnectedParticipants = Array.from(room.participants.values())
-            .filter(p => p.status === 'connected' && p.pubkey !== pubkey);
+            .filter(p => p.status === 'connected' && p.pubkey !== userIdentifier);
           
           const connectedCount = currentlyConnectedParticipants.length;
           
@@ -222,18 +233,18 @@ export function setupWebRTCRoutes(app) {
           // If there are existing connected participants, this joiner should be the caller
           if (connectedCount > 0) {
             shouldInitiateOffer = true;
-            console.log(`🔥 ROLE ASSIGNMENT: ${pubkey} will be CALLER (existing connected participants found)`);
+            console.log(`🔥 ROLE ASSIGNMENT: ${userIdentifier} will be CALLER (existing connected participants found)`);
           } else {
             shouldInitiateOffer = false;
-            console.log(`🔥 ROLE ASSIGNMENT: ${pubkey} will be ANSWERER (first connected participant)`);
+            console.log(`🔥 ROLE ASSIGNMENT: ${userIdentifier} will be ANSWERER (first connected participant)`);
           }
         } else {
           // New room, first participant
           shouldInitiateOffer = true;
-          console.log(`🔥 ROLE ASSIGNMENT: ${pubkey} will be ANSWERER (new room, first participant)`);
+          console.log(`🔥 ROLE ASSIGNMENT: ${userIdentifier} will be ANSWERER (new room, first participant)`);
         }
 
-        joinResult = sessionManager.handleParticipantJoin(roomId, pubkey);
+        joinResult = sessionManager.handleParticipantJoin(roomId, userIdentifier);
         console.log(`Join result:`, joinResult);
         console.log(`Should initiate offer: ${shouldInitiateOffer}`);
         console.log(`Is rejoin: ${joinResult.isRejoin}`);
@@ -258,8 +269,8 @@ export function setupWebRTCRoutes(app) {
 
   app.post('/api/webrtc/rooms/:roomId/leave', async (req, res) => {
     const { roomId } = req.params;
-    const { pubkey } = req.user;
     const isGuest = req.query.guest === 'true';
+    console.log('req.query:', req.query);
 
     let userIdentifier;
     
@@ -268,7 +279,7 @@ export function setupWebRTCRoutes(app) {
       if (authResult && !authResult.success) {
         return authResult;
       }
-      userIdentifier = pubkey;
+      userIdentifier = req.user.pubkey;
     } else {
       const guestCheck = await validateGuestAccess(req);
       if (!guestCheck.valid) {
@@ -282,17 +293,18 @@ export function setupWebRTCRoutes(app) {
     
     console.log(`=== LEAVE ROOM REQUEST ===`);
     console.log(`Room ID: ${roomId}`);
-    console.log(`User pubkey: ${pubkey}`);
+    console.log(`User pubkey: ${userIdentifier}`);
     console.log(`Timestamp: ${new Date().toISOString()}`);
     
     try {
-      const leaveResult = sessionManager.handleParticipantLeave(roomId, pubkey);
+      const leaveResult = sessionManager.handleParticipantLeave(roomId, userIdentifier);
       
       console.log(`Leave result:`, leaveResult);
       
       console.log('About to broadcast for roomId:', roomId, 'type:', typeof roomId);
       broadcastParticipantCount(roomId);
 
+      console.log(`=== LEAVE ROOM REQUEST COMPLETED ===`);
       return res.json({ 
         status: 'left',
         participants: leaveResult.participantCount,
@@ -302,8 +314,6 @@ export function setupWebRTCRoutes(app) {
       console.error('Error in WebRTC leave:', error);
       return res.status(500).json({ error: 'Failed to leave room' });
     }
-    
-    console.log(`=== LEAVE ROOM REQUEST COMPLETED ===`);
   });
 
   app.post('/api/webrtc/rooms/:roomId/reset-connection', async (req, res) => {
@@ -346,7 +356,6 @@ export function setupWebRTCRoutes(app) {
 
   app.post('/api/webrtc/rooms/:roomId/offer', async (req, res) => {
     const { roomId } = req.params;
-    const { pubkey } = req.user;
     const { offer } = req.body;
     const isGuest = req.query.guest === 'true';
     
@@ -357,7 +366,7 @@ export function setupWebRTCRoutes(app) {
       if (authResult && !authResult.success) {
         return authResult;
       }
-      userIdentifier = pubkey;
+      userIdentifier = req.user.pubkey;
     } else {
       const guestCheck = await validateGuestAccess(req);
       if (!guestCheck.valid) {
@@ -375,7 +384,7 @@ export function setupWebRTCRoutes(app) {
         return res.status(404).json({ error: 'Room not found' });
       }
       
-      sessionManager.setOffer(roomId, offer, pubkey);
+      sessionManager.setOffer(roomId, offer, userIdentifier);
       return res.json({ status: 'offer-sent' });
     } catch (error) {
       console.error('Error sending offer:', error);
@@ -415,15 +424,16 @@ export function setupWebRTCRoutes(app) {
   app.post('/api/webrtc/rooms/:roomId/answer', async (req, res) => {
     const { roomId } = req.params;
     const { answer } = req.body;
-    const { pubkey } = req.user;
+    
     const isGuest = req.query.guest === 'true';
+    let userIdentifier;
 
     if (!isGuest) {
       const authResult = validateAuthToken(req, res);
       if (authResult && !authResult.success) {
         return authResult;
       }
-      userIdentifier = pubkey;
+      userIdentifier = req.user.pubkey;
     } else {
       const guestCheck = await validateGuestAccess(req);
       if (!guestCheck.valid) {
@@ -441,7 +451,7 @@ export function setupWebRTCRoutes(app) {
         return res.status(404).json({ error: 'Room not found' });
       }
       
-      room.pendingAnswer = { answer, from: pubkey, timestamp: Date.now() };
+      room.pendingAnswer = { answer, from: userIdentifier, timestamp: Date.now() };
       
       return res.json({ status: 'answer-sent' });
     } catch (error) {
@@ -482,7 +492,6 @@ export function setupWebRTCRoutes(app) {
   app.post('/api/webrtc/rooms/:roomId/ice-candidate', async (req, res) => {
     const { roomId } = req.params;
     const { candidate } = req.body;
-    const { pubkey } = req.user;
     const isGuest = req.query.guest === 'true';
     
     let userIdentifier;
@@ -492,7 +501,7 @@ export function setupWebRTCRoutes(app) {
       if (authResult && !authResult.success) {
         return authResult;
       }
-      userIdentifier = pubkey;
+      userIdentifier = req.user.pubkey;
     } else {
       const guestCheck = await validateGuestAccess(req);
       if (!guestCheck.valid) {
@@ -511,7 +520,7 @@ export function setupWebRTCRoutes(app) {
       }
       
       if (!room.iceCandidates) room.iceCandidates = [];
-      room.iceCandidates.push({ candidate, from: pubkey, timestamp: Date.now() });
+      room.iceCandidates.push({ candidate, from: userIdentifier, timestamp: Date.now() });
       
       return res.json({ status: 'ice-candidate-sent' });
     } catch (error) {
@@ -523,7 +532,6 @@ export function setupWebRTCRoutes(app) {
   app.get('/api/webrtc/rooms/:roomId/ice-candidates', async (req, res) => {
     const { roomId } = req.params;
     const isGuest = req.query.guest === 'true';
-    const { pubkey } = req.user;
     
     let userIdentifier;
     
@@ -532,7 +540,7 @@ export function setupWebRTCRoutes(app) {
       if (authResult && !authResult.success) {
         return authResult;
       }
-      userIdentifier = pubkey;
+      userIdentifier = req.user.pubkey;
     } else {
       const guestCheck = await validateGuestAccess(req);
       if (!guestCheck.valid) {
@@ -552,7 +560,7 @@ export function setupWebRTCRoutes(app) {
       }
       
       // Return candidates from other participants
-      const candidates = room.iceCandidates.filter(ic => ic.from !== pubkey);
+      const candidates = room.iceCandidates.filter(ic => ic.from !== userIdentifier);
       
       return res.json({ candidates });
     } catch (error) {
