@@ -46,9 +46,24 @@ class WebRTCSessionManager {
   // Handle participant joining (new or rejoin)
   handleParticipantJoin(roomId, pubkey) {
     console.log(`=== HANDLING JOIN: ${pubkey} -> ${roomId} ===`);
+    console.log(`Timestamp: ${Date.now()}`);
     
     const room = this.getOrCreateRoom(roomId);
     
+    console.log(`🔍 ROOM STATE BEFORE JOIN:`);
+    console.log(`   Room age: ${Date.now() - room.createdAt}ms`);
+    console.log(`   Total participants: ${room.participants.size}`);
+
+    if (room.participants.size > 0) {
+      console.log(`   Existing participants:`);
+      room.participants.forEach((p, key) => {
+        console.log(`     - ${key}: status=${p.status}, joinedAt=${Date.now() - p.joinedAt}ms ago`);
+      });
+    }
+  
+    console.log(`   Pending offer: ${room.pendingOffer ? 'YES from ' + room.pendingOffer.from : 'NO'}`);
+    console.log(`   Pending answer: ${room.pendingAnswer ? 'YES from ' + room.pendingAnswer.from : 'NO'}`)
+
     // Check if this is a rejoin
     const existingParticipant = room.participants.get(pubkey);
     const isRejoin = !!existingParticipant;
@@ -112,6 +127,7 @@ class WebRTCSessionManager {
   // In webrtc-session-management.js, update the handleParticipantLeave function:
   handleParticipantLeave(roomId, pubkey) {
     console.log(`=== HANDLING LEAVE: ${pubkey} -> ${roomId} ===`);
+    console.log(`Timestamp: ${Date.now()}`);
     
     const room = this.rooms.get(roomId);
     if (!room) {
@@ -132,7 +148,12 @@ class WebRTCSessionManager {
     participant.lastSeenAt = Date.now();
     
     // CLEAR ALL WEBRTC SIGNALING DATA when someone leaves
+    console.log(`🧹 BEFORE CLEARING SIGNALING DATA:`);
+    console.log(`   Had offer: ${!!room.pendingOffer} ${room.pendingOffer ? 'from ' + room.pendingOffer.from : ''}`);
+    console.log(`   Had answer: ${!!room.pendingAnswer} ${room.pendingAnswer ? 'from ' + room.pendingAnswer.from : ''}`);
+    console.log(`   ICE candidates: ${room.iceCandidates.length}`);
     console.log('🧹 SERVER: Clearing all WebRTC signaling data due to participant leave');
+
     room.pendingOffer = null;
     room.pendingAnswer = null;
     room.iceCandidates = [];
@@ -215,8 +236,21 @@ class WebRTCSessionManager {
   // Complete room cleanup
   cleanupRoom(roomId) {
     console.log(`=== CLEANING UP ROOM ${roomId} ===`);
+    console.log(`⏰ Cleanup triggered at: ${new Date().toISOString()}`);
+
     const room = this.rooms.get(roomId);
     if (room) {
+      const roomAge = Date.now() - room.createdAt;
+    
+      console.log(`🔍 ROOM STATE AT CLEANUP:`);
+      console.log(`   Room age: ${roomAge}ms (${Math.round(roomAge/1000/60)} minutes)`);
+      console.log(`   Participants: ${room.participants.size}`);
+      console.log(`   First leave: ${room.firstLeaveAt ? new Date(room.firstLeaveAt).toISOString() : 'never'}`);
+      console.log(`   Last empty: ${room.lastEmptyAt ? new Date(room.lastEmptyAt).toISOString() : 'never'}`);
+      console.log(`   Had pending offer: ${!!room.pendingOffer}`);
+      console.log(`   Had pending answer: ${!!room.pendingAnswer}`);
+      console.log(`   ICE candidates: ${room.iceCandidates.length}`);
+
       // Clear any timers
       if (room.expireTimer) {
         clearTimeout(room.expireTimer);
@@ -230,6 +264,8 @@ class WebRTCSessionManager {
       // Remove room completely
       this.rooms.delete(roomId);
       console.log(`Room ${roomId} deleted from memory`);
+    } else {
+      console.log(`⚠️ Room ${roomId} already deleted or never existed`);
     }
   }
 
@@ -244,6 +280,19 @@ class WebRTCSessionManager {
       return false; // Room not found
     }
     
+    const roomAge = Date.now() - room.createdAt;
+    const participantsList = Array.from(room.participants.keys()).join(', ');
+    
+    console.log(`📤 setOffer: Room ${roomId}`);
+    console.log(`   From: ${fromPubkey}`);
+    console.log(`   Room age: ${roomAge}ms`);
+    console.log(`   Participants in room: ${participantsList}`);
+    console.log(`   Had previous offer: ${!!room.pendingOffer}`);
+    
+    if (room.pendingOffer) {
+      console.log(`   ⚠️ OVERWRITING offer from: ${room.pendingOffer.from}`);
+    }
+
     room.pendingOffer = { offer, from: fromPubkey, timestamp: Date.now() };
     
     // Mark participant as having active session
@@ -259,6 +308,19 @@ class WebRTCSessionManager {
   setAnswer(roomId, answer, fromPubkey) {
     const room = this.rooms.get(roomId);
     if (room) {
+      const roomAge = Date.now() - room.createdAt;
+      const participantsList = Array.from(room.participants.keys()).join(', ');
+      
+      console.log(`📤 setOffer: Room ${roomId}`);
+      console.log(`   From: ${fromPubkey}`);
+      console.log(`   Room age: ${roomAge}ms`);
+      console.log(`   Participants in room: ${participantsList}`);
+      console.log(`   Had previous offer: ${!!room.pendingOffer}`);
+      
+      if (room.pendingOffer) {
+        console.log(`   ⚠️ OVERWRITING offer from: ${room.pendingOffer.from}`);
+      }
+
       room.pendingAnswer = { answer, from: fromPubkey, timestamp: Date.now() };
       
       // Mark participant as having active session

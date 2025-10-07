@@ -232,16 +232,16 @@ export function setupWebRTCRoutes(app) {
           
           // If there are existing connected participants, this joiner should be the caller
           if (connectedCount > 0) {
-            shouldInitiateOffer = true;
-            console.log(`🔥 ROLE ASSIGNMENT: ${userIdentifier} will be CALLER (existing connected participants found)`);
-          } else {
             shouldInitiateOffer = false;
-            console.log(`🔥 ROLE ASSIGNMENT: ${userIdentifier} will be ANSWERER (first connected participant)`);
+            console.log(`🔥 ROLE ASSIGNMENT: ${userIdentifier} will be ANSWERER (existing connected participants found)`);
+          } else {
+            shouldInitiateOffer = true;
+            console.log(`🔥 ROLE ASSIGNMENT: ${userIdentifier} will be CALLER (first connected participant)`);
           }
         } else {
           // New room, first participant
           shouldInitiateOffer = true;
-          console.log(`🔥 ROLE ASSIGNMENT: ${userIdentifier} will be ANSWERER (new room, first participant)`);
+          console.log(`🔥 ROLE ASSIGNMENT: ${userIdentifier} will be CALLER (new room, first participant)`);
         }
 
         joinResult = sessionManager.handleParticipantJoin(roomId, userIdentifier);
@@ -339,6 +339,12 @@ export function setupWebRTCRoutes(app) {
     try {
       const room = sessionManager.getRoom(roomId);
       if (room) {
+        console.log(`🔄 CONNECTION RESET - Room: ${roomId}`);
+        console.log(`   Had pending offer: ${!!room.pendingOffer}`);
+        console.log(`   Had pending answer: ${!!room.pendingAnswer}`);
+        console.log(`   ICE candidates count: ${room.iceCandidates?.length || 0}`);
+        console.log(`   Participants count: ${room.participants?.size || 0}`);
+
         // Clear all connection state but keep participants
         delete room.pendingOffer;
         delete room.pendingAnswer;
@@ -384,6 +390,17 @@ export function setupWebRTCRoutes(app) {
         return res.status(404).json({ error: 'Room not found' });
       }
       
+      const hadPreviousOffer = !!room.pendingOffer;
+      if (hadPreviousOffer) {
+        const previousOfferAge = Date.now() - room.pendingOffer.timestamp;
+        console.log(`⚠️ OVERWRITING EXISTING OFFER - Room: ${roomId}`);
+        console.log(`   Previous offer from: ${room.pendingOffer.from}`);
+        console.log(`   Previous offer age: ${Math.round(previousOfferAge/1000)}s`);
+        console.log(`   New offer from: ${userIdentifier}`);
+      } else {
+        console.log(`📤 NEW OFFER CREATED - Room: ${roomId}, from: ${userIdentifier}`);
+      }
+
       sessionManager.setOffer(roomId, offer, userIdentifier);
       return res.json({ status: 'offer-sent' });
     } catch (error) {
@@ -414,6 +431,21 @@ export function setupWebRTCRoutes(app) {
     
     try {
       const room = sessionManager.getRoom(roomId);
+
+      if (room?.pendingOffer) {
+        const offerAge = Date.now() - room.pendingOffer.timestamp;
+        console.log(`📤 GET OFFER - Room: ${roomId}`);
+        console.log(`   Offer age: ${offerAge}ms (${Math.round(offerAge/1000)}s)`);
+        console.log(`   Offer from: ${room.pendingOffer.from}`);
+        console.log(`   Offer timestamp: ${new Date(room.pendingOffer.timestamp).toISOString()}`);
+        
+        if (offerAge > 30000) {
+          console.warn(`⚠️ STALE OFFER DETECTED: ${Math.round(offerAge/1000)}s old`);
+        }
+      } else {
+        console.log(`📤 GET OFFER - Room: ${roomId} - No offer available`);
+      }
+
       return res.json({ offer: room?.pendingOffer || null });
     } catch (error) {
       console.error('Error getting offer:', error);
@@ -450,7 +482,18 @@ export function setupWebRTCRoutes(app) {
       if (!room) {
         return res.status(404).json({ error: 'Room not found' });
       }
-      
+  
+      const hadPreviousAnswer = !!room.pendingAnswer;
+      if (hadPreviousAnswer) {
+        const previousAnswerAge = Date.now() - room.pendingAnswer.timestamp;
+        console.log(`⚠️ OVERWRITING EXISTING ANSWER - Room: ${roomId}`);
+        console.log(`   Previous answer from: ${room.pendingAnswer.from}`);
+        console.log(`   Previous answer age: ${Math.round(previousAnswerAge/1000)}s`);
+        console.log(`   New answer from: ${userIdentifier}`);
+      } else {
+        console.log(`📥 NEW ANSWER CREATED - Room: ${roomId}, from: ${userIdentifier}`);
+      }
+
       room.pendingAnswer = { answer, from: userIdentifier, timestamp: Date.now() };
       
       return res.json({ status: 'answer-sent' });
@@ -482,6 +525,21 @@ export function setupWebRTCRoutes(app) {
     
     try {
       const room = sessionManager.getRoom(roomId);
+
+      if (room?.pendingAnswer) {
+        const answerAge = Date.now() - room.pendingAnswer.timestamp;
+        console.log(`📥 GET ANSWER - Room: ${roomId}`);
+        console.log(`   Answer age: ${answerAge}ms (${Math.round(answerAge/1000)}s)`);
+        console.log(`   Answer from: ${room.pendingAnswer.from}`);
+        console.log(`   Answer timestamp: ${new Date(room.pendingAnswer.timestamp).toISOString()}`);
+        
+        if (answerAge > 30000) {
+          console.warn(`⚠️ STALE ANSWER DETECTED: ${Math.round(answerAge/1000)}s old`);
+        }
+      } else {
+        console.log(`📥 GET ANSWER - Room: ${roomId} - No answer available`);
+      }
+
       return res.json({ answer: room?.pendingAnswer || null });
     } catch (error) {
       console.error('Error getting answer:', error);
@@ -520,6 +578,11 @@ export function setupWebRTCRoutes(app) {
       }
       
       if (!room.iceCandidates) room.iceCandidates = [];
+
+      console.log(`🧊 ICE CANDIDATE ADDED - Room: ${roomId}`);
+      console.log(`   From: ${userIdentifier}`);
+      console.log(`   Total candidates in room: ${room.iceCandidates.length + 1}`);
+
       room.iceCandidates.push({ candidate, from: userIdentifier, timestamp: Date.now() });
       
       return res.json({ status: 'ice-candidate-sent' });
@@ -562,6 +625,22 @@ export function setupWebRTCRoutes(app) {
       // Return candidates from other participants
       const candidates = room.iceCandidates.filter(ic => ic.from !== userIdentifier);
       
+      console.log(`🧊 GET ICE CANDIDATES - Room: ${roomId}`);
+      console.log(`   Requesting user: ${userIdentifier}`);
+      console.log(`   Total candidates in room: ${room.iceCandidates.length}`);
+      console.log(`   Candidates being returned: ${candidates.length}`);
+      
+      if (candidates.length > 0) {
+        console.log(`   Candidate details:`);
+        candidates.forEach((c, i) => {
+          const age = Date.now() - c.timestamp;
+          console.log(`     [${i}] from: ${c.from}, age: ${Math.round(age/1000)}s`);
+          if (age > 60000) {
+            console.warn(`     ⚠️ OLD CANDIDATE: ${Math.round(age/1000)}s`);
+          }
+        });
+      }
+
       return res.json({ candidates });
     } catch (error) {
       console.error('Error getting ICE candidates:', error);
