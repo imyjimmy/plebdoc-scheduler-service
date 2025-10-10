@@ -2,7 +2,7 @@ const { generateRoomId } = require('../utils/availability');
 const sessionManager = require('../utils/webrtc-session-management');
 const { pool } = require('../config/database');
 const { timeCheck } = require('../utils/availability');
-const { validateAuthToken, validateGuestAccess } = require('../middleware/auth');
+const { getUserIdentifier, validateAuthToken, validateGuestAccess } = require('../middleware/auth');
 
 const BASE_URL = process.env.BASE_URL || 'https://plebdoc.com';
 
@@ -13,40 +13,71 @@ export function setupWebRTCRoutes(app) {
 
   // Endpoint to create a new appointment/room
   app.post('/api/appointments/create', async (req, res) => {
-    const authResult = validateAuthToken(req, res);
-    if (authResult && !authResult.success) {
-      return authResult;
-    }
+    try {
+      // Authenticate user (no guest access for creating appointments)
+      const authResult = authenticateSession(req);
+      if (!authResult.success) {
+        return res.status(401).json({
+          success: false,
+          error: authResult.error || 'Authentication required'
+        });
+      }
 
-    const { doctorName, appointmentTime, notes } = req.body;
-    const roomId = generateRoomId();
-    
-    // Store appointment in your system (database, memory, etc.)
-    // For now, just return the room ID
-    return res.json({
-      roomId,
-      doctorName,
-      appointmentTime,
-      webrtcUrl: `${BASE_URL}/api/webrtc/rooms/${roomId}`,
-      message: `Appointment room created: ${roomId}`
-    });
+      const { sessionId, authMethod } = authResult.user;
+      console.log(`Creating appointment - User: ${authMethod} - ${sessionId}`);
+
+      const { doctorName, appointmentTime, notes } = req.body;
+      const roomId = generateRoomId();
+      
+      // Store appointment in your system (database, memory, etc.)
+      // For now, just return the room ID
+      return res.json({
+        success: true,
+        roomId,
+        doctorName,
+        appointmentTime,
+        webrtcUrl: `${BASE_URL}/api/webrtc/rooms/${roomId}`,
+        message: `Appointment room created: ${roomId}`
+      });
+    } catch (error) {
+      console.error('Error creating appointment:', error);
+      return res.status(500).json({
+        success: false,
+        error: 'Failed to create appointment'
+      });
+    }
   });
 
+  // Endpoint for testing room generation
   app.get('/api/patients/appointments', async (req, res) => {
-    const authResult = validateAuthToken(req, res);
-    if (authResult && !authResult.success) {
-      return authResult;
-    }
-
-    const { pubkey } = req.user; // Only pubkey is guaranteed to be in JWT
-    
     let connection;
 
     console.log(`=== GET PATIENT APPOINTMENTS ===`);
-    console.log(`User pubkey: ${pubkey}`);
     console.log(`Timestamp: ${new Date().toISOString()}`);
     
     try {
+      // Authenticate user (no guest access for this endpoint)
+      const authResult = authenticateSession(req);
+      if (!authResult.success) {
+        return res.status(401).json({
+          success: false,
+          error: authResult.error || 'Authentication required'
+        });
+      }
+
+      const { sessionId, authMethod, metadata } = authResult.user;
+      console.log(`Authenticated user: ${authMethod} - ${sessionId}`);
+
+      // For now, only Nostr users have appointments (OAuth coming later)
+      if (authMethod !== 'nostr') {
+        return res.status(400).json({
+          success: false,
+          error: 'Only Nostr-authenticated users can access appointments currently'
+        });
+      }
+
+      const pubkey = metadata.pubkey;
+      
       connection = await pool.getConnection();
 
       // First, get the user ID from the pubkey
@@ -111,7 +142,7 @@ export function setupWebRTCRoutes(app) {
           : null
       }));
 
-      console.log(`Found ${rows.length} appointments for patient ${userId} (pubkey: ${pubkey}), appt start: ${appointments}`);
+      console.log(`Found ${rows.length} appointments for patient ${userId} (pubkey: ${pubkey})`);
 
       connection.release();
 
@@ -134,62 +165,73 @@ export function setupWebRTCRoutes(app) {
 
   // Endpoint for testing room generation
   app.get('/api/appointments/generate-room', async (req, res) => {
-    const authResult = validateAuthToken(req, res);
-    if (authResult && !authResult.success) {
-      return authResult;
-    }
+    try {
+      // Authenticate user
+      const authResult = authenticateSession(req);
+      if (!authResult.success) {
+        return res.status(401).json({
+          success: false,
+          error: authResult.error || 'Authentication required'
+        });
+      }
 
-    const roomId = generateRoomId();
-    
-    return res.json({
-      roomId,
-      webrtcUrl: `${BASE_URL}/api/webrtc/rooms/${roomId}`
-    });
+      const roomId = generateRoomId();
+      
+      return res.json({
+        success: true,
+        roomId,
+        webrtcUrl: `${BASE_URL}/api/webrtc/rooms/${roomId}`
+      });
+    } catch (error) {
+      console.error('Error generating room:', error);
+      return res.status(500).json({
+        success: false,
+        error: 'Failed to generate room'
+      });
+    }
   });
   
   app.post('/api/webrtc/rooms/:roomId/join', async (req, res) => {
     const { roomId } = req.params;
     const isGuest = req.query.guest === 'true';
-    let userIdentifier;
-    
-    if (!isGuest) {
-      const authResult = validateAuthToken(req, res);
-      if (authResult && !authResult.success) {
-        return authResult;
-      }
-      userIdentifier = req.user.pubkey;
-    } else {
-      const guestCheck = await validateGuestAccess(req);
-      if (!guestCheck.valid) {
-        return res.status(403).json({
-          success: false,
-          error: guestCheck.error || 'Unauthorized'
-        });
-      }
-      userIdentifier = `guest-room-${roomId}`;
-    }
-
-    console.log(`=== JOIN ROOM REQUEST ===`);
-    console.log(`Room ID: ${roomId}`);
-    console.log(`User pubkey or identifier: ${userIdentifier}`);
-    console.log(`Timestamp: ${new Date().toISOString()}`);
-
     let connection;
     
+    console.log(`=== JOIN ROOM REQUEST ===`);
+    console.log(`Room ID: ${roomId}`);
+    console.log(`Is guest param: ${isGuest}`);
+    console.log(`Timestamp: ${new Date().toISOString()}`);
+    
     try {
+      // Get user identifier (handles both auth and guest)
+      const identityResult = await getUserIdentifier(req, isGuest);
+      
+      if (identityResult.error) {
+        return res.status(identityResult.status || 403).json({
+          success: false,
+          error: identityResult.error
+        });
+      }
+      
+      const { userIdentifier, user } = identityResult;
+      if (user) req.user = user; // Set req.user for downstream use
+      
+      console.log(`User identifier: ${userIdentifier}`);
+      
       connection = await pool.getConnection();
       let rows;
 
-      if (!isGuest) {
+      if (user) {
         // Authenticated user - check they're authorized for this specific room
+        const lookupValue = user.authMethod === 'nostr' ? user.metadata.pubkey : userIdentifier;
+        
         [rows] = await connection.execute(`
           SELECT a.*, u.nostr_pubkey, u.timezone 
           FROM appointments a 
           JOIN users u ON (u.id = a.id_users_provider OR u.id = a.id_users_customer)
           WHERE a.location = ? AND u.nostr_pubkey = ?
-        `, [roomId, userIdentifier]);
+        `, [roomId, lookupValue]);
       } else {
-        // Guest - just verify the room exists (already validated by validateGuestAccess)
+        // Guest - just verify the room exists (already validated)
         [rows] = await connection.execute(`
           SELECT a.*, u.nostr_pubkey, u.timezone 
           FROM appointments a 
@@ -199,67 +241,55 @@ export function setupWebRTCRoutes(app) {
         `, [roomId]);
       }
 
-      let joinResult; 
-
       const isAuthorized = rows.length > 0;
-      console.log('checking appt rows: ', rows);
+      console.log('Checking appointment rows: ', rows);
       const timeCheckResult = isAuthorized ? timeCheck(rows[0].start_datetime, rows[0].timezone) : false;
-      console.log('timecheck result: ', timeCheckResult);
+      console.log('Time check result: ', timeCheckResult);
       
-      if (!isAuthorized) { // !timeCheckResult
+      if (!isAuthorized) {
         connection.release();
+        console.error('Error, not authorized for room: ', roomId, userIdentifier);
+        return res.status(403).json({ error: 'Not authorized for this room' });
+      }
       
-        if (!isAuthorized) {
-          console.error('Error, not authorized for room: ', roomId, pubkey);
-          return res.status(403).json({ error: 'Not authorized for this room' });
+      const room = sessionManager.getRoom(roomId);
+      let shouldInitiateOffer = false;
+      
+      if (room) {
+        const currentlyConnectedParticipants = Array.from(room.participants.values())
+          .filter(p => p.status === 'connected' && p.pubkey !== userIdentifier);
+        
+        const connectedCount = currentlyConnectedParticipants.length;
+        console.log(`Currently connected participants (excluding joiner): ${connectedCount}`);
+        
+        if (connectedCount > 0) {
+          shouldInitiateOffer = false;
+          console.log(`🔥 ROLE ASSIGNMENT: ${userIdentifier} will be ANSWERER (existing connected participants found)`);
         } else {
-          console.error('Error, too early to join room: ', roomId, pubkey);
-          return res.status(403).json({ error: 'Room not available yet. You can join 15 minutes before the appointment.' });
+          shouldInitiateOffer = true;
+          console.log(`🔥 ROLE ASSIGNMENT: ${userIdentifier} will be CALLER (first connected participant)`);
         }
       } else {
-        const room = sessionManager.getRoom(roomId);
-        
-        let shouldInitiateOffer = false;
-        
-        if (room) {
-          // Count currently connected participants (excluding the joining participant)
-          const currentlyConnectedParticipants = Array.from(room.participants.values())
-            .filter(p => p.status === 'connected' && p.pubkey !== userIdentifier);
-          
-          const connectedCount = currentlyConnectedParticipants.length;
-          
-          console.log(`Currently connected participants (excluding joiner): ${connectedCount}`);
-          
-          // If there are existing connected participants, this joiner should be the caller
-          if (connectedCount > 0) {
-            shouldInitiateOffer = false;
-            console.log(`🔥 ROLE ASSIGNMENT: ${userIdentifier} will be ANSWERER (existing connected participants found)`);
-          } else {
-            shouldInitiateOffer = true;
-            console.log(`🔥 ROLE ASSIGNMENT: ${userIdentifier} will be CALLER (first connected participant)`);
-          }
-        } else {
-          // New room, first participant
-          shouldInitiateOffer = true;
-          console.log(`🔥 ROLE ASSIGNMENT: ${userIdentifier} will be CALLER (new room, first participant)`);
-        }
-
-        joinResult = sessionManager.handleParticipantJoin(roomId, userIdentifier);
-        console.log(`Join result:`, joinResult);
-        console.log(`Should initiate offer: ${shouldInitiateOffer}`);
-        console.log(`Is rejoin: ${joinResult.isRejoin}`);
-        
-        broadcastParticipantCount(roomId);
-        connection.release();
-        console.log(`=== JOIN ROOM REQUEST COMPLETED ===`);
-
-        return res.json({ 
-          status: 'joined', // Always return 'joined', never 'rejoined'
-          participants: joinResult.participantCount,
-          roomInfo: joinResult.roomInfo,
-          shouldInitiateOffer: shouldInitiateOffer // ✅ Use the new logic
-        });
+        shouldInitiateOffer = true;
+        console.log(`🔥 ROLE ASSIGNMENT: ${userIdentifier} will be CALLER (new room, first participant)`);
       }
+
+      const joinResult = sessionManager.handleParticipantJoin(roomId, userIdentifier);
+      console.log(`Join result:`, joinResult);
+      console.log(`Should initiate offer: ${shouldInitiateOffer}`);
+      console.log(`Is rejoin: ${joinResult.isRejoin}`);
+      
+      broadcastParticipantCount(roomId);
+      connection.release();
+      console.log(`=== JOIN ROOM REQUEST COMPLETED ===`);
+
+      return res.json({ 
+        status: 'joined',
+        participants: joinResult.participantCount,
+        roomInfo: joinResult.roomInfo,
+        shouldInitiateOffer: shouldInitiateOffer
+      });
+      
     } catch (error) {
       if (connection) connection.release();
       console.error('Error in WebRTC join:', error);
@@ -270,38 +300,31 @@ export function setupWebRTCRoutes(app) {
   app.post('/api/webrtc/rooms/:roomId/leave', async (req, res) => {
     const { roomId } = req.params;
     const isGuest = req.query.guest === 'true';
-    console.log('req.query:', req.query);
-
-    let userIdentifier;
-    
-    if (!isGuest) {
-      const authResult = validateAuthToken(req, res);
-      if (authResult && !authResult.success) {
-        return authResult;
-      }
-      userIdentifier = req.user.pubkey;
-    } else {
-      const guestCheck = await validateGuestAccess(req);
-      if (!guestCheck.valid) {
-        return res.status(403).json({
-          success: false,
-          error: guestCheck.error || 'Unauthorized'
-        });
-      }
-      userIdentifier = `guest-room-${roomId}`;
-    }
     
     console.log(`=== LEAVE ROOM REQUEST ===`);
     console.log(`Room ID: ${roomId}`);
-    console.log(`User pubkey: ${userIdentifier}`);
+    console.log(`Is guest param: ${isGuest}`);
     console.log(`Timestamp: ${new Date().toISOString()}`);
     
     try {
+      // Get user identifier (handles both auth and guest)
+      const identityResult = await getUserIdentifier(req, isGuest);
+      
+      if (identityResult.error) {
+        return res.status(identityResult.status || 403).json({
+          success: false,
+          error: identityResult.error
+        });
+      }
+      
+      const { userIdentifier } = identityResult;
+      console.log(`User identifier: ${userIdentifier}`);
+      
       const leaveResult = sessionManager.handleParticipantLeave(roomId, userIdentifier);
       
       console.log(`Leave result:`, leaveResult);
-      
       console.log('About to broadcast for roomId:', roomId, 'type:', typeof roomId);
+      
       broadcastParticipantCount(roomId);
 
       console.log(`=== LEAVE ROOM REQUEST COMPLETED ===`);
@@ -317,29 +340,25 @@ export function setupWebRTCRoutes(app) {
   });
 
   app.post('/api/webrtc/rooms/:roomId/reset-connection', async (req, res) => {
+    const { roomId } = req.params;
     const isGuest = req.query.guest === 'true';
     
-    if (!isGuest) {
-      const authResult = validateAuthToken(req, res);
-      if (authResult && !authResult.success) {
-        return authResult;
-      }
-    } else {
-      const guestCheck = await validateGuestAccess(req);
-      if (!guestCheck.valid) {
-        return res.status(403).json({
+    try {
+      // Get user identifier (handles both auth and guest)
+      const identityResult = await getUserIdentifier(req, isGuest);
+      
+      if (identityResult.error) {
+        return res.status(identityResult.status || 403).json({
           success: false,
-          error: guestCheck.error || 'Unauthorized'
+          error: identityResult.error
         });
       }
-    }
-
-    const { roomId } = req.params;
-    
-    try {
+      
+      const { userIdentifier } = identityResult;
+      console.log(`🔄 CONNECTION RESET REQUEST - Room: ${roomId}, User: ${userIdentifier}`);
+      
       const room = sessionManager.getRoom(roomId);
       if (room) {
-        console.log(`🔄 CONNECTION RESET - Room: ${roomId}`);
         console.log(`   Had pending offer: ${!!room.pendingOffer}`);
         console.log(`   Had pending answer: ${!!room.pendingAnswer}`);
         console.log(`   ICE candidates count: ${room.iceCandidates?.length || 0}`);
@@ -350,7 +369,9 @@ export function setupWebRTCRoutes(app) {
         delete room.pendingAnswer;
         room.iceCandidates = [];
         
-        console.log(`Connection reset for room ${roomId}`);
+        console.log(`✅ Connection reset for room ${roomId}`);
+      } else {
+        console.log(`⚠️ Room ${roomId} not found for reset`);
       }
       
       return res.json({ status: 'connection-reset' });
@@ -365,26 +386,19 @@ export function setupWebRTCRoutes(app) {
     const { offer } = req.body;
     const isGuest = req.query.guest === 'true';
     
-    let userIdentifier;
-    
-    if (!isGuest) {
-      const authResult = validateAuthToken(req, res);
-      if (authResult && !authResult.success) {
-        return authResult;
-      }
-      userIdentifier = req.user.pubkey;
-    } else {
-      const guestCheck = await validateGuestAccess(req);
-      if (!guestCheck.valid) {
-        return res.status(403).json({
+    try {
+      // Get user identifier (handles both auth and guest)
+      const identityResult = await getUserIdentifier(req, isGuest);
+      
+      if (identityResult.error) {
+        return res.status(identityResult.status || 403).json({
           success: false,
-          error: guestCheck.error || 'Unauthorized'
+          error: identityResult.error
         });
       }
-      userIdentifier = `guest-room-${roomId}`;
-    }
-    
-    try {
+      
+      const { userIdentifier } = identityResult;
+      
       const room = sessionManager.getRoom(roomId);
       if (!room) {
         return res.status(404).json({ error: 'Room not found' });
@@ -410,31 +424,27 @@ export function setupWebRTCRoutes(app) {
   });
 
   app.get('/api/webrtc/rooms/:roomId/offer', async (req, res) => {
+    const { roomId } = req.params;
     const isGuest = req.query.guest === 'true';
     
-    if (!isGuest) {
-      const authResult = validateAuthToken(req, res);
-      if (authResult && !authResult.success) {
-        return authResult;
-      }
-    } else {
-      const guestCheck = await validateGuestAccess(req);
-      if (!guestCheck.valid) {
-        return res.status(403).json({
+    try {
+      // Get user identifier (handles both auth and guest)
+      const identityResult = await getUserIdentifier(req, isGuest);
+      
+      if (identityResult.error) {
+        return res.status(identityResult.status || 403).json({
           success: false,
-          error: guestCheck.error || 'Unauthorized'
+          error: identityResult.error
         });
       }
-    }
-
-    const { roomId } = req.params;
-    
-    try {
+      
+      const { userIdentifier } = identityResult;
+      
       const room = sessionManager.getRoom(roomId);
 
       if (room?.pendingOffer) {
         const offerAge = Date.now() - room.pendingOffer.timestamp;
-        console.log(`📤 GET OFFER - Room: ${roomId}`);
+        console.log(`📤 GET OFFER - Room: ${roomId}, User: ${userIdentifier}`);
         console.log(`   Offer age: ${offerAge}ms (${Math.round(offerAge/1000)}s)`);
         console.log(`   Offer from: ${room.pendingOffer.from}`);
         console.log(`   Offer timestamp: ${new Date(room.pendingOffer.timestamp).toISOString()}`);
@@ -443,7 +453,7 @@ export function setupWebRTCRoutes(app) {
           console.warn(`⚠️ STALE OFFER DETECTED: ${Math.round(offerAge/1000)}s old`);
         }
       } else {
-        console.log(`📤 GET OFFER - Room: ${roomId} - No offer available`);
+        console.log(`📤 GET OFFER - Room: ${roomId}, User: ${userIdentifier} - No offer available`);
       }
 
       return res.json({ offer: room?.pendingOffer || null });
@@ -456,33 +466,26 @@ export function setupWebRTCRoutes(app) {
   app.post('/api/webrtc/rooms/:roomId/answer', async (req, res) => {
     const { roomId } = req.params;
     const { answer } = req.body;
-    
     const isGuest = req.query.guest === 'true';
-    let userIdentifier;
-
-    if (!isGuest) {
-      const authResult = validateAuthToken(req, res);
-      if (authResult && !authResult.success) {
-        return authResult;
-      }
-      userIdentifier = req.user.pubkey;
-    } else {
-      const guestCheck = await validateGuestAccess(req);
-      if (!guestCheck.valid) {
-        return res.status(403).json({
-          success: false,
-          error: guestCheck.error || 'Unauthorized'
-        });
-      }
-      userIdentifier = `guest-room-${roomId}`;
-    }
 
     try {
+      // Get user identifier (handles both auth and guest)
+      const identityResult = await getUserIdentifier(req, isGuest);
+      
+      if (identityResult.error) {
+        return res.status(identityResult.status || 403).json({
+          success: false,
+          error: identityResult.error
+        });
+      }
+      
+      const { userIdentifier } = identityResult;
+
       const room = sessionManager.getRoom(roomId);
       if (!room) {
         return res.status(404).json({ error: 'Room not found' });
       }
-  
+
       const hadPreviousAnswer = !!room.pendingAnswer;
       if (hadPreviousAnswer) {
         const previousAnswerAge = Date.now() - room.pendingAnswer.timestamp;
@@ -504,31 +507,27 @@ export function setupWebRTCRoutes(app) {
   });
 
   app.get('/api/webrtc/rooms/:roomId/answer', async (req, res) => {
+    const { roomId } = req.params;
     const isGuest = req.query.guest === 'true';
     
-    if (!isGuest) {
-      const authResult = validateAuthToken(req, res);
-      if (authResult && !authResult.success) {
-        return authResult;
-      }
-    } else {
-      const guestCheck = await validateGuestAccess(req);
-      if (!guestCheck.valid) {
-        return res.status(403).json({
+    try {
+      // Get user identifier (handles both auth and guest)
+      const identityResult = await getUserIdentifier(req, isGuest);
+      
+      if (identityResult.error) {
+        return res.status(identityResult.status || 403).json({
           success: false,
-          error: guestCheck.error || 'Unauthorized'
+          error: identityResult.error
         });
       }
-    }
-
-    const { roomId } = req.params;
-    
-    try {
+      
+      const { userIdentifier } = identityResult;
+      
       const room = sessionManager.getRoom(roomId);
 
       if (room?.pendingAnswer) {
         const answerAge = Date.now() - room.pendingAnswer.timestamp;
-        console.log(`📥 GET ANSWER - Room: ${roomId}`);
+        console.log(`📥 GET ANSWER - Room: ${roomId}, User: ${userIdentifier}`);
         console.log(`   Answer age: ${answerAge}ms (${Math.round(answerAge/1000)}s)`);
         console.log(`   Answer from: ${room.pendingAnswer.from}`);
         console.log(`   Answer timestamp: ${new Date(room.pendingAnswer.timestamp).toISOString()}`);
@@ -537,7 +536,7 @@ export function setupWebRTCRoutes(app) {
           console.warn(`⚠️ STALE ANSWER DETECTED: ${Math.round(answerAge/1000)}s old`);
         }
       } else {
-        console.log(`📥 GET ANSWER - Room: ${roomId} - No answer available`);
+        console.log(`📥 GET ANSWER - Room: ${roomId}, User: ${userIdentifier} - No answer available`);
       }
 
       return res.json({ answer: room?.pendingAnswer || null });
@@ -552,26 +551,19 @@ export function setupWebRTCRoutes(app) {
     const { candidate } = req.body;
     const isGuest = req.query.guest === 'true';
     
-    let userIdentifier;
-    
-    if (!isGuest) {
-      const authResult = validateAuthToken(req, res);
-      if (authResult && !authResult.success) {
-        return authResult;
-      }
-      userIdentifier = req.user.pubkey;
-    } else {
-      const guestCheck = await validateGuestAccess(req);
-      if (!guestCheck.valid) {
-        return res.status(403).json({
+    try {
+      // Get user identifier (handles both auth and guest)
+      const identityResult = await getUserIdentifier(req, isGuest);
+      
+      if (identityResult.error) {
+        return res.status(identityResult.status || 403).json({
           success: false,
-          error: guestCheck.error || 'Unauthorized'
+          error: identityResult.error
         });
       }
-      userIdentifier = `guest-room-${roomId}`;
-    }
-    
-    try {
+      
+      const { userIdentifier } = identityResult;
+      
       const room = sessionManager.getRoom(roomId);
       if (!room) {
         return res.status(404).json({ error: 'Room not found' });
@@ -596,26 +588,19 @@ export function setupWebRTCRoutes(app) {
     const { roomId } = req.params;
     const isGuest = req.query.guest === 'true';
     
-    let userIdentifier;
-    
-    if (!isGuest) {
-      const authResult = validateAuthToken(req, res);
-      if (authResult && !authResult.success) {
-        return authResult;
-      }
-      userIdentifier = req.user.pubkey;
-    } else {
-      const guestCheck = await validateGuestAccess(req);
-      if (!guestCheck.valid) {
-        return res.status(403).json({
+    try {
+      // Get user identifier (handles both auth and guest)
+      const identityResult = await getUserIdentifier(req, isGuest);
+      
+      if (identityResult.error) {
+        return res.status(identityResult.status || 403).json({
           success: false,
-          error: guestCheck.error || 'Unauthorized'
+          error: identityResult.error
         });
       }
-      userIdentifier = `guest-room-${roomId}`;
-    }
+      
+      const { userIdentifier } = identityResult;
 
-    try {
       const room = sessionManager.getRoom(roomId);
       
       if (!room || !room.iceCandidates) {
@@ -652,25 +637,34 @@ export function setupWebRTCRoutes(app) {
   * For SSE (Server-Sent Events), the token is passed as a query parameter because browsers 
   * can't send custom headers with EventSource connections.
   */
-  app.get('/api/webrtc/rooms/:roomId/events', (req, res) => {
+  app.get('/api/webrtc/rooms/:roomId/events', async (req, res) => {
     console.log('/api/webrtc/rooms/:roomId/events, roomId:', req.params.roomId);
 
+    const { roomId } = req.params;
     const isGuest = req.query.guest === 'true';
-    if (!isGuest) {
-      // Extract token from query param for SSE and set it in the header for validateAuthToken
-      const token = req.query.token;
-      if (token) {
-        req.headers.authorization = `Bearer ${token}`;
-      }
     
-      const authResult = validateAuthToken(req, res);
-      if (authResult && !authResult.success) {
-        return authResult;
+    try {
+      // For SSE, extract token from query param and temporarily set it in headers
+      if (!isGuest && req.query.token) {
+        req.headers.authorization = `Bearer ${req.query.token}`;
       }
-    }
-    
-    try { 
-      const { roomId } = req.params;      
+      
+      // Get user identifier (handles both auth and guest)
+      const identityResult = await getUserIdentifier(req, isGuest);
+      
+      if (identityResult.error) {
+        return new Response(JSON.stringify({
+          success: false,
+          error: identityResult.error
+        }), {
+          status: identityResult.status || 403,
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+      
+      const { userIdentifier } = identityResult;
+      console.log(`📡 SSE Connection - Room: ${roomId}, User: ${userIdentifier}`);
+      
       let controller;
       let connectionData;
       
@@ -689,13 +683,13 @@ export function setupWebRTCRoutes(app) {
             sseConnections.set(roomId, new Set());
           }
           
-          connectionData = { controller, closed: false, createdAt: Date.now() };
+          connectionData = { controller, closed: false, createdAt: Date.now(), userIdentifier };
           sseConnections.get(roomId).add(connectionData);
           
-          console.log('Added connection to sseConnections, total:', sseConnections.get(roomId).size);
+          console.log(`Added SSE connection for ${userIdentifier}, total connections: ${sseConnections.get(roomId).size}`);
         },
         cancel() {
-          console.log('ReadableStream cancelled - cleaning up connection');
+          console.log(`ReadableStream cancelled - cleaning up connection for ${userIdentifier}`);
           if (connectionData) {
             connectionData.closed = true;
             const roomConnections = sseConnections.get(roomId);
@@ -720,10 +714,13 @@ export function setupWebRTCRoutes(app) {
         }
       });
     } catch (error) {
-      console.error('Actual error in try block:', error);
-      return res.status(401).json({ 
+      console.error('Error in SSE events route:', error);
+      return new Response(JSON.stringify({ 
         status: 'error', 
-        reason: 'WebRtc Route: Error' 
+        reason: 'Failed to establish SSE connection' 
+      }), {
+        status: 500,
+        headers: { 'Content-Type': 'application/json' }
       });
     }
   });

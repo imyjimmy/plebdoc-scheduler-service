@@ -3,13 +3,104 @@ const { pool } = require('../config/database');
 
 const JWT_SECRET = process.env.JWT_SECRET;
 
+/**
+ * Unified authentication function for Bun (returns result object, not middleware)
+ * Checks for Nostr JWT or OAuth token and returns session info
+ */
+export const authenticateSession = (req) => {
+  const authHeader = req.headers?.authorization;
+  
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return { success: false, error: 'No token provided' };
+  }
+
+  const token = authHeader.substring(7);
+
+  try {
+    // Try to decode as JWT
+    const decoded = jwt.verify(token, JWT_SECRET);
+    
+    // Check if it's a Nostr JWT (has pubkey field)
+    if (decoded.pubkey) {
+      return {
+        success: true,
+        user: {
+          sessionId: decoded.pubkey,
+          authMethod: 'nostr',
+          trustLevel: 'high',
+          metadata: decoded
+        }
+      };
+    }
+    
+    // Check if it's an OAuth JWT (has oauthProvider and userId fields)
+    if (decoded.oauthProvider && decoded.userId) {
+      return {
+        success: true,
+        user: {
+          sessionId: `oauth:${decoded.oauthProvider}:${decoded.userId}`,
+          authMethod: 'oauth',
+          trustLevel: 'high',
+          metadata: decoded
+        }
+      };
+    }
+    
+    // Valid JWT but unknown format
+    console.warn('⚠️ Valid JWT but unrecognized format:', decoded);
+    return { success: false, error: 'Unrecognized token format' };
+    
+  } catch (error) {
+    console.log('Token validation failed:', error.message);
+    return { success: false, error: 'Invalid token' };
+  }
+};
+
+/**
+ * Helper function to get user identifier for WebRTC routes
+ * Handles both authenticated users and guests
+ * Returns: { userIdentifier, isGuest, user? }
+ */
+export const getUserIdentifier = async (req, isGuestParam = false) => {
+  const { roomId } = req.params;
+  
+  // Try authentication first (if not explicitly a guest request)
+  if (!isGuestParam) {
+    const authResult = authenticateSession(req);
+    
+    if (authResult.success) {
+      console.log(`Authenticated user: ${authResult.user.authMethod} - ${authResult.user.sessionId}`);
+      return {
+        userIdentifier: authResult.user.sessionId,
+        isGuest: false,
+        user: authResult.user
+      };
+    }
+  }
+  
+  // Fall back to guest validation
+  const guestCheck = await validateGuestAccess(req);
+  
+  if (!guestCheck.valid) {
+    return {
+      error: guestCheck.error || 'Unauthorized',
+      status: 403
+    };
+  }
+  
+  console.log(`Guest user: guest-room-${roomId}`);
+  return {
+    userIdentifier: `guest-room-${roomId}`,
+    isGuest: true
+  };
+};
+
+/**
+ * Legacy function - kept for backward compatibility
+ * Routes using this should migrate to authenticateSession
+ */
 export const validateAuthToken = (req, res) => {
   try {
-    // console.log('validateAuthToken called with req type:', typeof req);
-    // console.log('req object keys:', Object.keys(req || {}));
-    // console.log('req.headers type:', typeof req?.headers);
-    // console.log('req.headers value:', req?.headers);
-    
     const authHeader = req.headers?.authorization;
     console.log('authHeader:', authHeader);
 
