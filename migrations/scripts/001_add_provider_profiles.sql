@@ -7,6 +7,16 @@ CREATE TABLE IF NOT EXISTS provider_profiles (
   user_id INT PRIMARY KEY,
   username VARCHAR(100) UNIQUE,
   
+  bio TEXT,
+  profile_pic_url VARCHAR(255),
+
+  -- Demographics (for verification)
+  year_of_birth INT,           -- YOB field
+  place_of_birth VARCHAR(30),  -- POB field
+  gender CHAR(1),              -- GEN field (M, F)
+
+  languages JSON,  -- Array of languages
+  
   -- Identity (from TX Med Board)
   first_name VARCHAR(22),  -- FN field
   last_name VARCHAR(25),   -- LN field
@@ -29,11 +39,7 @@ CREATE TABLE IF NOT EXISTS provider_profiles (
   -- Specialties  
   primary_specialty VARCHAR(30),   -- SPEC1 field
   secondary_specialty VARCHAR(30),  -- SPEC2 field
-  
-  -- Demographics (for verification)
-  year_of_birth INT,           -- YOB field
-  place_of_birth VARCHAR(30),  -- POB field
-  gender CHAR(1),              -- GEN field (M, F)
+  board_certifications JSON, -- array of certifications
   
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,

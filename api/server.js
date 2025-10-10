@@ -77,6 +77,51 @@ const server = Bun.serve({
       });
     }
 
+    // Serve static files from uploads directory
+    if (url.pathname.startsWith('/uploads/')) {
+      console.log('📁 Static file request:', url.pathname);
+      console.log('📁 Current working directory:', process.cwd());
+      try {
+        const filepath = `.${url.pathname}`;
+        console.log('📁 Filepath:', filepath);
+        console.log('📁 Resolved path:', require('path').resolve(filepath));
+        const file = Bun.file(filepath);
+        const exists = await file.exists();
+        console.log('📁 File exists:', exists);
+        
+        if (!exists) {
+          return new Response('File not found', { 
+            status: 404,
+            headers: corsHeaders 
+          });
+        }
+        
+        // Get file extension to set correct content type
+        const ext = filepath.split('.').pop().toLowerCase();
+        const contentTypes = {
+          'jpg': 'image/jpeg',
+          'jpeg': 'image/jpeg',
+          'png': 'image/png',
+          'webp': 'image/webp',
+          'gif': 'image/gif'
+        };
+        
+        return new Response(file, {
+          headers: {
+            'Content-Type': contentTypes[ext] || 'application/octet-stream',
+            'Cache-Control': 'public, max-age=31536000',
+            ...corsHeaders
+          }
+        });
+      } catch (error) {
+        console.error('Error serving static file:', error);
+        return new Response('Internal server error', { 
+          status: 500,
+          headers: corsHeaders 
+        });
+      }
+    }
+
     // Find matching route
     const methodRoutes = routes[req.method];
     if (methodRoutes) {
@@ -172,7 +217,8 @@ async function createReq(req, url, pattern) {
     query: Object.fromEntries(url.searchParams),
     headers: headersObj,
     body: body,
-    json: () => Promise.resolve(body)
+    json: () => Promise.resolve(body),
+    formData: () => req.formData(),
   };
   
   // console.log('createReq returning object with headers:', Object.keys(reqObj.headers));

@@ -127,6 +127,37 @@ export const setupAdminRoutes = (app) => {
     }
   });
 
+  // GET /api/admin/me - just returns { username: 'drsmith' | null , userId: 123 // guaranteed to exist }
+  app.get('/api/admin/me', async (req, res) => {
+    const authResult = validateAuthToken(req, res);
+    if (!authResult.success) {
+      return res.status(401).json({ error: authResult.error });
+    }
+    
+    const connection = await pool.getConnection();
+    try {
+      const [rows] = await connection.execute(
+        `SELECT pp.username, u.id as user_id
+        FROM users u
+        LEFT JOIN provider_profiles pp ON pp.user_id = u.id 
+        WHERE u.nostr_pubkey = ?`,
+        [req.user.pubkey]
+      );
+      
+      if (rows.length === 0) {
+        return res.status(404).json({ error: 'User not found' });
+      }
+      
+      // Return username (may be null) and user_id
+      return res.json({ 
+        username: rows[0].username,
+        userId: rows[0].user_id 
+      });
+    } finally {
+      connection.release();
+    }
+  });
+
   // User registration endpoint
   app.post('/api/admin/register-user', async (req, res) => {
     const authResult = validateAuthToken(req, res);

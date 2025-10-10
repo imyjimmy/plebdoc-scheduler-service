@@ -173,6 +173,7 @@ export const setupProviderRoutes = (app) => {
       const camelCaseProfile = {
         userId: profileData.user_id,
         username: profileData.username,
+        profilePic: profileData.profile_pic_url,
         firstName: profileData.first_name,
         lastName: profileData.last_name,
         suffix: profileData.suffix,
@@ -239,6 +240,7 @@ export const setupProviderRoutes = (app) => {
         first_name,
         last_name,
         suffix,
+        bio,
         license_number,
         license_state,
         license_issued_date,
@@ -262,18 +264,19 @@ export const setupProviderRoutes = (app) => {
       await connection.execute(
         `
         INSERT INTO provider_profiles (
-          user_id, username, first_name, last_name, suffix,
+          user_id, username, first_name, last_name, suffix, bio,
           license_number, license_state, license_issued_date, license_expiration_date,
           registration_status, registration_date, method_of_licensure,
           medical_school, graduation_year, degree_type,
           primary_specialty, secondary_specialty,
           year_of_birth, place_of_birth, gender
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON DUPLICATE KEY UPDATE
           username = VALUES(username),
           first_name = VALUES(first_name),
           last_name = VALUES(last_name),
           suffix = VALUES(suffix),
+          bio = VALUES(bio),
           license_number = VALUES(license_number),
           license_state = VALUES(license_state),
           license_issued_date = VALUES(license_issued_date),
@@ -296,6 +299,7 @@ export const setupProviderRoutes = (app) => {
           toNull(first_name),
           toNull(last_name),
           toNull(suffix),
+          toNull(bio),
           toNull(license_number),
           toNull(license_state),
           toNull(license_issued_date),
@@ -323,6 +327,156 @@ export const setupProviderRoutes = (app) => {
         message: 'Failed to save profile',
         error: error.message,
       });
+    }
+  });
+
+  // POST profile picture upload
+  app.post('/api/admin/provider/profile-pic', async (req) => {
+    const authResult = validateAuthToken(req);
+    if (!authResult.success) {
+      return new Response(JSON.stringify({ error: authResult.error }), {
+        status: 401,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+
+    try {
+      const { pubkey } = authResult.user;
+      const connection = await pool.getConnection();
+
+      // 1. Get user_id from pubkey
+      const [userRows] = await connection.execute(
+        `SELECT id FROM users WHERE nostr_pubkey = ? AND id_roles IN (2, 5)`,
+        [pubkey]
+      );
+      
+      if (userRows.length === 0) {
+        connection.release();
+        return new Response(JSON.stringify({ error: 'Provider not found' }), {
+          status: 404,
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+      
+      const userId = userRows[0].id;
+
+      // 2. Parse multipart form data
+      const formData = await req.formData();
+      const file = formData.get('profile_pic');
+      
+      if (!file) {
+        connection.release();
+        return new Response(JSON.stringify({ error: 'No file uploaded' }), {
+          status: 400,
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      // 3. Validate file type
+      const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
+      if (!allowedTypes.includes(file.type)) {
+        connection.release();
+        return new Response(JSON.stringify({ 
+          error: 'Invalid file type. Only JPEG, PNG, and WebP allowed.' 
+        }), {
+          status: 400,
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      // 4. Validate file size (5MB max)
+      const maxSize = 5 * 1024 * 1024;
+      if (file.size > maxSize) {
+        connection.release();
+        return new Response(JSON.stringify({ 
+          error: 'File too large. Maximum size is 5MB.' 
+        }), {
+          status: 400,
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      // 5. Generate unique filename
+      const ext = file.name.split('.').pop();
+      const filename = `user_${userId}_${Date.now()}.${ext}`;
+      const filepath = `./uploads/profiles/${filename}`;
+      const urlPath = `/api/admin/uploads/profiles/${filename}`;
+
+      // 6. Ensure directory exists
+      const fs = require('fs');
+      const path = require('path');
+      const uploadDir = path.join(process.cwd(), 'uploads', 'profiles');
+      if (!fs.existsSync(uploadDir)) {
+        fs.mkdirSync(uploadDir, { recursive: true });
+      }
+
+      // 7. Save file to disk
+      const arrayBuffer = await file.arrayBuffer();
+      const buffer = Buffer.from(arrayBuffer);
+      await Bun.write(filepath, buffer);
+
+      // 8. Update database with file path
+      await connection.execute(
+        `UPDATE provider_profiles 
+        SET profile_pic_url = ? 
+        WHERE user_id = ?`,
+        [urlPath, userId]
+      );
+
+      connection.release();
+
+      return new Response(JSON.stringify({ 
+        status: 'success',
+        message: 'Profile picture uploaded successfully',
+        url: urlPath
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' }
+      });
+
+    } catch (error) {
+      console.error('Error uploading profile picture:', error);
+      return new Response(JSON.stringify({ 
+        error: 'Failed to upload profile picture',
+        details: error.message 
+      }), {
+        status: 500,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+  });
+
+  // GET profile picture (serves the file)
+  app.get('/api/admin/uploads/profiles/:filename', async (req, res) => {
+    try {
+      const { filename } = req.params;
+      const filepath = `./uploads/profiles/${filename}`;
+      
+      const file = Bun.file(filepath);
+      const exists = await file.exists();
+      
+      if (!exists) {
+        return res.status(404).json({ error: 'File not found' });
+      }
+      
+      const ext = filename.split('.').pop().toLowerCase();
+      const contentTypes = {
+        'jpg': 'image/jpeg',
+        'jpeg': 'image/jpeg',
+        'png': 'image/png',
+        'webp': 'image/webp',
+        'gif': 'image/gif'
+      };
+      
+      return new Response(file, {
+        headers: {
+          'Content-Type': contentTypes[ext] || 'application/octet-stream',
+          'Cache-Control': 'public, max-age=31536000'
+        }
+      });
+    } catch (error) {
+      console.error('Error serving profile pic:', error);
+      return res.status(500).json({ error: 'Failed to serve file' });
     }
   });
 };
