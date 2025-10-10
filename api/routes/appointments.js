@@ -289,6 +289,12 @@ export const setupAppointmentRoutes = (app) => {
       
       const providerId = providerRows[0].id;
       
+      // BRITTLE: This LEFT JOIN on invoices creates unnecessary coupling.
+      // If invoices table doesn't exist, entire endpoint fails even though
+      // calendar view doesn't need invoice data. Should be split into:
+      // - /api/admin/appointments (calendar - no invoices)
+      // - /api/admin/billing/appointments (billing - with invoices)
+
       // Get appointments for this provider with related data
       const [appointments] = await connection.execute(`
         SELECT 
