@@ -3,6 +3,7 @@ import { setupAppointmentRoutes } from './routes/appointments.js';
 import { setupAdminRoutes } from './routes/admin.js';
 import { setupWebRTCRoutes } from './routes/webrtc.js';
 import { setupBillingRoutes } from './routes/billing.js';
+import { setupGoogleRoutes } from './routes/google-auth.js';
 import { swaggerSpec } from './docs/swagger.js';
 
 const PORT = process.env.PORT || 3005;
@@ -32,6 +33,8 @@ console.log('🔧 Setting up admin routes...');
 setupAdminRoutes(app);
 console.log('🔧 Setting up Webrtc Routes');
 setupWebRTCRoutes(app);
+console.log('Setting up Google Routes');
+setupGoogleRoutes(app);
 console.log('🔧 Setting up Billing Routes');
 setupBillingRoutes(app);
 

@@ -44,6 +44,10 @@ CREATE TABLE IF NOT EXISTS provider_profiles (
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   
+  -- working plan and timezone
+  working_plan JSON,
+  timezone VARCHAR(50) DEFAULT 'America/Chicago',
+
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
   INDEX idx_username (username),
   INDEX idx_license (license_number)

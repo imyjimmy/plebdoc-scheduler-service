@@ -177,6 +177,13 @@ export const setupProviderRoutes = (app) => {
         firstName: profileData.first_name,
         lastName: profileData.last_name,
         suffix: profileData.suffix,
+        bio: profileData.bio,
+        languages: profileData.languages,
+        workingPlan: profileData.working_plan,
+        timezone: profileData.timezone,
+        yearOfBirth: profileData.year_of_birth,
+        placeOfBirth: profileData.place_of_birth,
+        gender: profileData.gender,
         licenseNumber: profileData.license_number,
         licenseState: profileData.license_state,
         licenseIssuedDate: profileData.license_issued_date,
@@ -189,10 +196,7 @@ export const setupProviderRoutes = (app) => {
         degreeType: profileData.degree_type,
         primarySpecialty: profileData.primary_specialty,
         secondarySpecialty: profileData.secondary_specialty,
-        yearOfBirth: profileData.year_of_birth,
-        placeOfBirth: profileData.place_of_birth,
-        gender: profileData.gender,
-        bio: profileData.bio,
+        boardCertifications: profileData.board_certifications,
         createdAt: profileData.created_at,
         updatedAt: profileData.updated_at
       };
@@ -253,9 +257,12 @@ export const setupProviderRoutes = (app) => {
         degree_type,
         primary_specialty,
         secondary_specialty,
+        board_certifications,
         year_of_birth,
         place_of_birth,
         gender,
+        working_plan,
+        timezone
       } = req.body;
 
       const toNull = (value) => value === undefined ? null : value;
@@ -268,9 +275,9 @@ export const setupProviderRoutes = (app) => {
           license_number, license_state, license_issued_date, license_expiration_date,
           registration_status, registration_date, method_of_licensure,
           medical_school, graduation_year, degree_type,
-          primary_specialty, secondary_specialty,
-          year_of_birth, place_of_birth, gender
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          primary_specialty, secondary_specialty, board_certifications,
+          year_of_birth, place_of_birth, gender, working_plan, timezone
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON DUPLICATE KEY UPDATE
           username = VALUES(username),
           first_name = VALUES(first_name),
@@ -289,9 +296,12 @@ export const setupProviderRoutes = (app) => {
           degree_type = VALUES(degree_type),
           primary_specialty = VALUES(primary_specialty),
           secondary_specialty = VALUES(secondary_specialty),
+          board_certifications = VALUES(board_certifications),
           year_of_birth = VALUES(year_of_birth),
           place_of_birth = VALUES(place_of_birth),
-          gender = VALUES(gender)
+          gender = VALUES(gender),
+          working_plan = VALUES(working_plan),
+          timezone = VALUES(timezone)
         `,
         [
           userId,
@@ -312,9 +322,12 @@ export const setupProviderRoutes = (app) => {
           toNull(degree_type),
           toNull(primary_specialty),
           toNull(secondary_specialty),
+          toNull(board_certifications),
           toNull(year_of_birth),
           toNull(place_of_birth),
           toNull(gender),
+          toNull(working_plan),
+          toNull(timezone),
         ]
       );
 
