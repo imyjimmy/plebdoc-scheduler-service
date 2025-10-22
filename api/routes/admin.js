@@ -1,5 +1,6 @@
 import { pool } from '../config/database.js';
-import { validateAuthToken } from '../middleware/auth.js';
+import { authenticateSession, validateAuthToken } from '../middleware/auth.js';
+import { getUserId } from '../utils/auth.js';
 
 export const setupAdminRoutes = (app) => {
   // Database test endpoint
@@ -136,12 +137,19 @@ export const setupAdminRoutes = (app) => {
     
     const connection = await pool.getConnection();
     try {
+      const userId = await getUserId(connection, req.user);
+      
+      if (!userId) {
+        return res.status(404).json({ error: 'User not found' });
+      }
+      
+      // Now just query by userId - works for both auth methods
       const [rows] = await connection.execute(
         `SELECT pp.username, u.id as user_id
         FROM users u
         LEFT JOIN provider_profiles pp ON pp.user_id = u.id 
-        WHERE u.nostr_pubkey = ?`,
-        [req.user.pubkey]
+        WHERE u.id = ?`,
+        [userId]
       );
       
       if (rows.length === 0) {
@@ -303,25 +311,17 @@ export const setupAdminRoutes = (app) => {
     if (!authResult.success) {
       return res.status(401).json({ error: authResult.error });
     }
-
+    
+    const connection = await pool.getConnection();
     try {
-      const { pubkey } = req.user;
-      const connection = await pool.getConnection();
+      const { sessionId, authMethod } = authResult.user;
+      console.log(`Getting services - User: ${authMethod} - ${sessionId}`);
+
+      const userId = await getUserId(connection, req.user);
       
-      console.log("getting pubkey: ", pubkey);
-      // First, get the user ID from the pubkey
-      const [userRows] = await connection.execute(`
-        SELECT id FROM users WHERE nostr_pubkey = ? AND id_roles IN (2, 5)
-      `, [pubkey]);
-      
-      if (userRows.length === 0) {
-        connection.release();
-        return res.status(404).json({ 
-          status: 'error',
-          message: 'Provider not found' 
-        });
+      if (!userId) {
+        return res.status(404).json({ error: 'User not found' });
       }
-      const providerId = userRows[0].id;
       
       // Now get the services for this provider
       const [services] = await connection.execute(`
@@ -333,9 +333,10 @@ export const setupAdminRoutes = (app) => {
         INNER JOIN services_providers sp ON s.id = sp.id_services
         WHERE sp.id_users = ?
         ORDER BY s.name
-      `, [providerId]);
+      `, [userId]);
       
       connection.release();
+      console.log(`Found ${services.length} services for provider ${userId}`);
             
       return res.json({
         status: 'success',
@@ -343,6 +344,10 @@ export const setupAdminRoutes = (app) => {
       });
       
     } catch (error) {
+      if (connection) { 
+        connection.release(); 
+      }
+      
       console.error('Failed to load services:', error);
       return res.status(500).json({
         status: 'error',
@@ -391,6 +396,8 @@ export const setupAdminRoutes = (app) => {
       return res.status(401).json({ error: authResult.error });
     }
 
+    const connection = await pool.getConnection();
+    
     try {
       const {
         name,
@@ -407,14 +414,29 @@ export const setupAdminRoutes = (app) => {
       } = req.body;
       
       if (!name || !duration) {
+        connection.release();
         return res.status(400).json({
           status: 'error',
           message: 'Service name and duration are required'
         });
       }
       
-      const connection = await pool.getConnection();
+      // Start transaction
+      await connection.beginTransaction();
       
+      // Get user ID (works for both Google and Nostr)
+      const userId = await getUserId(connection, req.user);
+      
+      if (!userId) {
+        await connection.rollback();
+        connection.release();
+        return res.status(400).json({
+          status: 'error',
+          message: 'User not found in database'
+        });
+      }
+
+      // Insert the service
       const [result] = await connection.execute(`
         INSERT INTO services (
           create_datetime,
@@ -447,27 +469,11 @@ export const setupAdminRoutes = (app) => {
       
       const serviceId = result.insertId;
 
-      const [userRows] = await connection.execute(`
-        SELECT id FROM users WHERE nostr_pubkey = ?
-      `, [req.user.pubkey]);
-
-      if (userRows.length === 0) {
-        await connection.rollback();
-        connection.release();
-        return res.status(400).json({
-          status: 'error',
-          message: 'User not found in database'
-        });
-      }
-
-      console.log('POST /api/admin/services got users: ', userRows);
-
-      const currentUserId = userRows[0].id;
-
+      // Link service to provider
       await connection.execute(`
         INSERT INTO services_providers (id_users, id_services) 
         VALUES (?, ?)
-      `, [currentUserId, serviceId]);
+      `, [userId, serviceId]);
       
       await connection.commit();
       connection.release();
@@ -475,10 +481,12 @@ export const setupAdminRoutes = (app) => {
       return res.json({
         status: 'success',
         message: 'Service created successfully',
-        service_id: result.insertId
+        service_id: serviceId
       });
       
     } catch (error) {
+      await connection.rollback();
+      connection.release();
       console.error('Failed to create service:', error);
       return res.status(500).json({
         status: 'error',

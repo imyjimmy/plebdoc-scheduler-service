@@ -270,24 +270,44 @@ export const setupAppointmentRoutes = (app) => {
     let connection;
     try {
       console.log('req:', req, 'user: ', req.user);
-      const { pubkey } = req.user; // From JWT token
+      const user = req.user; // From JWT token
       
       connection = await pool.getConnection();
       
-      // First get the provider's user ID from their pubkey
-      const [providerRows] = await connection.execute(`
-        SELECT id FROM users WHERE nostr_pubkey = ? AND id_roles IN (2, 5)
-      `, [pubkey]);
+      let providerId;
       
-      if (providerRows.length === 0) {
-        connection.release();
-        return res.status(404).json({
-          status: 'error',
-          message: 'Provider not found'
-        });
+      // Handle both Google OAuth and Nostr authentication
+      if (user.loginMethod === 'google' || user.oauthProvider === 'google') {
+        // Google users: verify they're a provider and get their ID
+        const [providerRows] = await connection.execute(`
+          SELECT id FROM users WHERE id = ? AND id_roles IN (2, 5)
+        `, [user.userId]);
+        
+        if (providerRows.length === 0) {
+          connection.release();
+          return res.status(404).json({
+            status: 'error',
+            message: 'Provider not found'
+          });
+        }
+        
+        providerId = providerRows[0].id;
+      } else {
+        // Nostr users: look up by pubkey
+        const [providerRows] = await connection.execute(`
+          SELECT id FROM users WHERE nostr_pubkey = ? AND id_roles IN (2, 5)
+        `, [user.pubkey]);
+        
+        if (providerRows.length === 0) {
+          connection.release();
+          return res.status(404).json({
+            status: 'error',
+            message: 'Provider not found'
+          });
+        }
+        
+        providerId = providerRows[0].id;
       }
-      
-      const providerId = providerRows[0].id;
       
       // BRITTLE: This LEFT JOIN on invoices creates unnecessary coupling.
       // If invoices table doesn't exist, entire endpoint fails even though

@@ -224,21 +224,72 @@ export const setupProviderRoutes = (app) => {
     }
 
     try {
-      const { pubkey } = req.user;
+      const user = req.user; // Get full user object
       const connection = await pool.getConnection();
 
-      // 1. Map pubkey → user_id
-      const [userRows] = await connection.execute(
-        `SELECT id FROM users WHERE nostr_pubkey = ? AND id_roles IN (2, 5)`,
-        [pubkey]
-      );
-      if (userRows.length === 0) {
-        connection.release();
-        return res.status(404).json({ status: 'error', message: 'Provider not found' });
-      }
-      const userId = userRows[0].id;
+      // 1. Ensure user exists in users table - handle both Google and Nostr
+      let userId;
+      
+      if (user.loginMethod === 'google' || user.oauthProvider === 'google') {
+        // Google users: check if they exist
+        const [userRows] = await connection.execute(
+          `SELECT id FROM users WHERE id = ?`,
+          [user.userId]
+        );
 
-      // 2. Gather fields from body (sanitize/validate in production!)
+        if (userRows.length === 0) {
+          // User doesn't exist - create them as a provider (id_roles = 2)
+          const [insertResult] = await connection.execute(
+            `INSERT INTO users (id_roles, first_name, last_name, email) 
+            VALUES (2, ?, ?, ?)`,
+            [
+              req.body.first_name || '',
+              req.body.last_name || '',
+              user.email || ''
+            ]
+          );
+          userId = insertResult.insertId;
+        } else {
+          userId = userRows[0].id;
+          
+          // Update user role to provider if not already
+          await connection.execute(
+            `UPDATE users SET id_roles = 5 WHERE id = ? AND id_roles NOT IN (2, 5)`,
+            [userId]
+          );
+        }
+      } else {
+        // Nostr users: look up by pubkey
+        const [userRows] = await connection.execute(
+          `SELECT id FROM users WHERE nostr_pubkey = ?`,
+          [user.pubkey]
+        );
+
+        if (userRows.length === 0) {
+          // User doesn't exist - create them as a provider (id_roles = 2)
+          const [insertResult] = await connection.execute(
+            `INSERT INTO users (nostr_pubkey, id_roles, first_name, last_name, email) 
+            VALUES (?, 2, ?, ?, ?)`,
+            [
+              user.pubkey,
+              req.body.first_name || '',
+              req.body.last_name || '',
+              req.body.email || ''
+            ]
+          );
+          userId = insertResult.insertId;
+        } else {
+          userId = userRows[0].id;
+          
+          // Update user role to provider if not already
+          await connection.execute(
+            `UPDATE users SET id_roles = 5 WHERE id = ? AND id_roles NOT IN (2, 5)`,
+            [userId]
+          );
+        }
+      }
+
+      // 2. Gather fields from body
       const {
         username,
         first_name,
@@ -267,7 +318,7 @@ export const setupProviderRoutes = (app) => {
 
       const toNull = (value) => value === undefined ? null : value;
 
-      // 3. Upsert into provider_profiles
+      // 3. Upsert into provider_profiles (now we know userId exists)
       await connection.execute(
         `
         INSERT INTO provider_profiles (
@@ -277,7 +328,7 @@ export const setupProviderRoutes = (app) => {
           medical_school, graduation_year, degree_type,
           primary_specialty, secondary_specialty, board_certifications,
           year_of_birth, place_of_birth, gender, working_plan, timezone
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON DUPLICATE KEY UPDATE
           username = VALUES(username),
           first_name = VALUES(first_name),
@@ -354,24 +405,45 @@ export const setupProviderRoutes = (app) => {
     }
 
     try {
-      const { pubkey } = authResult.user;
+      const user = authResult.user; // Get full user object instead of destructuring
       const connection = await pool.getConnection();
 
-      // 1. Get user_id from pubkey
-      const [userRows] = await connection.execute(
-        `SELECT id FROM users WHERE nostr_pubkey = ? AND id_roles IN (2, 5)`,
-        [pubkey]
-      );
+      // 1. Get user_id - handle both Google OAuth and Nostr users
+      let userId;
       
-      if (userRows.length === 0) {
-        connection.release();
-        return new Response(JSON.stringify({ error: 'Provider not found' }), {
-          status: 404,
-          headers: { 'Content-Type': 'application/json' }
-        });
+      if (user.loginMethod === 'google' || user.oauthProvider === 'google') {
+        // Google users: verify they're a provider
+        const [userRows] = await connection.execute(
+          `SELECT id FROM users WHERE id = ? AND id_roles IN (2, 5)`,
+          [user.userId]
+        );
+        
+        if (userRows.length === 0) {
+          connection.release();
+          return new Response(JSON.stringify({ error: 'Provider not found' }), {
+            status: 404,
+            headers: { 'Content-Type': 'application/json' }
+          });
+        }
+        
+        userId = userRows[0].id;
+      } else {
+        // Nostr users: look up by pubkey
+        const [userRows] = await connection.execute(
+          `SELECT id FROM users WHERE nostr_pubkey = ? AND id_roles IN (2, 5)`,
+          [user.pubkey]
+        );
+        
+        if (userRows.length === 0) {
+          connection.release();
+          return new Response(JSON.stringify({ error: 'Provider not found' }), {
+            status: 404,
+            headers: { 'Content-Type': 'application/json' }
+          });
+        }
+
+        userId = userRows[0].id;
       }
-      
-      const userId = userRows[0].id;
 
       // 2. Parse multipart form data
       const formData = await req.formData();
@@ -430,10 +502,10 @@ export const setupProviderRoutes = (app) => {
 
       // 8. Update database with file path
       await connection.execute(
-        `UPDATE provider_profiles 
-        SET profile_pic_url = ? 
-        WHERE user_id = ?`,
-        [urlPath, userId]
+        `INSERT INTO provider_profiles (user_id, profile_pic_url) 
+        VALUES (?, ?)
+        ON DUPLICATE KEY UPDATE profile_pic_url = VALUES(profile_pic_url)`,
+        [userId, urlPath]
       );
 
       connection.release();

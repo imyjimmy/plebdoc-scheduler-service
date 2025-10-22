@@ -2,7 +2,7 @@ const { generateRoomId } = require('../utils/availability');
 const sessionManager = require('../utils/webrtc-session-management');
 const { pool } = require('../config/database');
 const { timeCheck } = require('../utils/availability');
-const { getUserIdentifier, validateAuthToken, validateGuestAccess } = require('../middleware/auth');
+const { authenticateSession, getUserIdentifier } = require('../middleware/auth');
 
 const BASE_URL = process.env.BASE_URL || 'https://plebdoc.com';
 
