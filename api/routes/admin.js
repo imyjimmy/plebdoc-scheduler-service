@@ -145,7 +145,7 @@ export const setupAdminRoutes = (app) => {
       
       // Now just query by userId - works for both auth methods
       const [rows] = await connection.execute(
-        `SELECT pp.username, u.id as user_id
+        `SELECT pp.username, u.id as user_id, u.email
         FROM users u
         LEFT JOIN provider_profiles pp ON pp.user_id = u.id 
         WHERE u.id = ?`,
@@ -159,7 +159,8 @@ export const setupAdminRoutes = (app) => {
       // Return username (may be null) and user_id
       return res.json({ 
         username: rows[0].username,
-        userId: rows[0].user_id 
+        userId: rows[0].user_id,
+        email: rows[0].email
       });
     } finally {
       connection.release();
