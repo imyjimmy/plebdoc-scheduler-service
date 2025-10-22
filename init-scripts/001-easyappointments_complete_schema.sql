@@ -279,15 +279,10 @@ CREATE TABLE `invoices` (
   `created_at` datetime DEFAULT NULL,
   `paid_at` datetime DEFAULT NULL,
   PRIMARY KEY (`id`),
-  UNIQUE KEY `unique_appointment_invoice` (`appointment_id`),
   KEY `idx_invoice_hash` (`invoice_hash`),
   CONSTRAINT `invoices_appointments` FOREIGN KEY (`appointment_id`) REFERENCES `appointments` (`id`) ON DELETE CASCADE ON UPDATE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
-ALTER TABLE `invoices`
-  ADD CONSTRAINT `invoices_appointments` 
-  FOREIGN KEY (`appointment_id`) REFERENCES `appointments` (`id`) 
-  ON DELETE CASCADE ON UPDATE CASCADE;
 
 INSERT INTO `roles` (`id`, `create_datetime`, `update_datetime`, `name`, `slug`, `is_admin`, `appointments`, `customers`, `services`, `users`, `system_settings`, `user_settings`, `webhooks`, `blocked_periods`) VALUES
 (1, NULL, NULL, 'Administrator', 'admin', 1, 15, 15, 15, 15, 15, 15, 15, 15),
