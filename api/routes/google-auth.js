@@ -90,80 +90,80 @@ export function setupGoogleRoutes(app) {
    * Handle Google OAuth callback for provider login
    * GET /api/google/login/callback
    */
-  app.get('/api/google/login/callback', async (req, res) => {
-    try {
-      const url = new URL(req.url, 'http://localhost');
-      const code = url.searchParams.get('code');
-      const state = url.searchParams.get('state');
-      const error = url.searchParams.get('error');
+  // app.get('/api/google/login/callback', async (req, res) => {
+  //   try {
+  //     const url = new URL(req.url, 'http://localhost');
+  //     const code = url.searchParams.get('code');
+  //     const state = url.searchParams.get('state');
+  //     const error = url.searchParams.get('error');
 
-      const frontendUrl = process.env.GOOGLE_REDIRECT_URI_ADMIN || 'http://localhost:3003';
-      console.log('GOOGLE-AUTH, url: ', url, 'frontendurl: ', frontendUrl);
-      if (error) {
-        // Return 302 redirect response
-        return new Response(null, {
-          status: 302,
-          headers: {
-            'Location': `${frontendUrl}/login?error=${encodeURIComponent(error)}`
-          }
-        });
-      }
+  //     const frontendUrl = process.env.GOOGLE_REDIRECT_URI_ADMIN || 'http://localhost:3003';
+  //     console.log('GOOGLE-AUTH, url: ', url, 'frontendurl: ', frontendUrl);
+  //     if (error) {
+  //       // Return 302 redirect response
+  //       return new Response(null, {
+  //         status: 302,
+  //         headers: {
+  //           'Location': `${frontendUrl}/login?error=${encodeURIComponent(error)}`
+  //         }
+  //       });
+  //     }
 
-      if (!code || !state) {
-        return new Response(null, {
-          status: 302,
-          headers: {
-            'Location': `${frontendUrl}/login?error=missing_code`
-          }
-        });
-      }
+  //     if (!code || !state) {
+  //       return new Response(null, {
+  //         status: 302,
+  //         headers: {
+  //           'Location': `${frontendUrl}/login?error=missing_code`
+  //         }
+  //       });
+  //     }
 
-      // Exchange code for tokens
-      const tokens = await googleAuthService.getTokensFromCode(code);
-      const userInfo = await googleAuthService.getUserInfo(tokens.accessToken);
+  //     // Exchange code for tokens
+  //     const tokens = await googleAuthService.getTokensFromCode(code);
+  //     const userInfo = await googleAuthService.getUserInfo(tokens.accessToken);
 
-      const connection = await pool.getConnection();
+  //     const connection = await pool.getConnection();
       
-      try {
-        // ... database operations ...
+  //     try {
+  //       // ... database operations ...
         
-        // Generate JWT token
-        const sessionToken = jwt.sign(
-          {
-            userId: userId,
-            email: userInfo.email,
-            oauthProvider: 'google',
-            loginMethod: 'google'
-          },
-          JWT_SECRET,
-          { expiresIn: '7d' }
-        );
+  //       // Generate JWT token
+  //       const sessionToken = jwt.sign(
+  //         {
+  //           userId: userId,
+  //           email: userInfo.email,
+  //           oauthProvider: 'google',
+  //           loginMethod: 'google'
+  //         },
+  //         JWT_SECRET,
+  //         { expiresIn: '7d' }
+  //       );
 
-        // Redirect to frontend with token
-        const callbackUrl = `${frontendUrl}/login/google-callback?token=${sessionToken}&email=${encodeURIComponent(userInfo.email)}&new_user=${isNewUser}`;
+  //       // Redirect to frontend with token
+  //       const callbackUrl = `${frontendUrl}/login/google-callback?token=${sessionToken}&email=${encodeURIComponent(userInfo.email)}&new_user=${isNewUser}`;
         
-        return new Response(null, {
-          status: 302,
-          headers: {
-            'Location': callbackUrl
-          }
-        });
+  //       return new Response(null, {
+  //         status: 302,
+  //         headers: {
+  //           'Location': callbackUrl
+  //         }
+  //       });
         
-      } finally {
-        connection.release();
-      }
-    } catch (error) {
-      console.error('OAuth login callback error:', error);
-      const frontendUrl = process.env.GOOGLE_REDIRECT_URI_ADMIN || 'http://localhost:3003';
+  //     } finally {
+  //       connection.release();
+  //     }
+  //   } catch (error) {
+  //     console.error('OAuth login callback error:', error);
+  //     const frontendUrl = process.env.GOOGLE_REDIRECT_URI_ADMIN || 'http://localhost:3003';
       
-      return new Response(null, {
-        status: 302,
-        headers: {
-          'Location': `${frontendUrl}/login?error=${encodeURIComponent(error.message)}`
-        }
-      });
-    }
-  });
+  //     return new Response(null, {
+  //       status: 302,
+  //       headers: {
+  //         'Location': `${frontendUrl}/login?error=${encodeURIComponent(error.message)}`
+  //       }
+  //     });
+  //   }
+  // });
 
   // ============================================================================
   // AUTHENTICATED ROUTES - Calendar Management (Auth Required)
@@ -221,7 +221,9 @@ export function setupGoogleRoutes(app) {
       
       console.log('🔍 Parsed params:', { code, state, error });
 
-      const frontendUrl = 'http://localhost:3003';
+      const frontendUrl = process.env.GOOGLE_REDIRECT_URI_ADMIN || 'http://localhost:3003';
+      console.log('🔍 GOOGLE_REDIRECT_URI_ADMIN:', process.env.GOOGLE_REDIRECT_URI_ADMIN);
+      console.log('🔍 Using frontendUrl:', frontendUrl);
 
       if (error) {
         return new Response(null, {
