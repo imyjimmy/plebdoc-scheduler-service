@@ -98,7 +98,7 @@ export function setupGoogleRoutes(app) {
       const error = url.searchParams.get('error');
 
       const frontendUrl = process.env.GOOGLE_REDIRECT_URI_ADMIN || 'http://localhost:3003';
-
+      console.log('GOOGLE-AUTH, url: ', url, 'frontendurl: ', frontendUrl);
       if (error) {
         // Return 302 redirect response
         return new Response(null, {
