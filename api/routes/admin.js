@@ -104,7 +104,7 @@ export const setupAdminRoutes = (app) => {
         
         return res.json({
           status: 'success',
-          userFound: true,
+          isRegistered: true,
           user: {
             ...user,
             role: roleRows[0] || null
@@ -113,8 +113,7 @@ export const setupAdminRoutes = (app) => {
       } else {
         return res.json({
           status: 'success',
-          userFound: false,
-          message: 'No user found with this Nostr pubkey'
+          isRegistered: false
         });
       }
       
@@ -143,9 +142,8 @@ export const setupAdminRoutes = (app) => {
         return res.status(404).json({ error: 'User not found' });
       }
       
-      // Now just query by userId - works for both auth methods
       const [rows] = await connection.execute(
-        `SELECT pp.username, u.id as user_id, u.email
+        `SELECT pp.username, u.id as user_id, u.email, u.nostr_pubkey
         FROM users u
         LEFT JOIN provider_profiles pp ON pp.user_id = u.id 
         WHERE u.id = ?`,
@@ -156,11 +154,11 @@ export const setupAdminRoutes = (app) => {
         return res.status(404).json({ error: 'User not found' });
       }
       
-      // Return username (may be null) and user_id
       return res.json({ 
         username: rows[0].username,
         userId: rows[0].user_id,
-        email: rows[0].email
+        email: rows[0].email,
+        nostrPubkey: rows[0].nostr_pubkey  // Will be null if not set
       });
     } finally {
       connection.release();
@@ -304,6 +302,10 @@ export const setupAdminRoutes = (app) => {
         error: error.message
       });
     }
+  });
+
+  app.put('/api/admin/update-nostr-pubkey', async (req, res) => {
+
   });
 
   // Service management endpoints

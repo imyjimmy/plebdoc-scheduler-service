@@ -220,16 +220,48 @@ export function setupWebRTCRoutes(app) {
       connection = await pool.getConnection();
       let rows;
 
+      /*
+      If you're going to assign generated Nostr keypairs to OAuth users anyway, you could simplify the whole thing:
+        javascriptif (user) {
+          // All users (Nostr + OAuth with generated keys) lookup by user.id
+          const userId = user.metadata.userId || user.metadata.id; // Adapt based on your JWT structure
+          
+          [rows] = await connection.execute(`
+            SELECT a.*, u.timezone, u.nostr_pubkey 
+            FROM appointments a 
+            JOIN users u ON (u.id = a.id_users_provider OR u.id = a.id_users_customer)
+            WHERE a.location = ? AND u.id = ?
+          `, [roomId, userId]);
+        } else {
+          // Guest path...
+        }
+      */
       if (user) {
         // Authenticated user - check they're authorized for this specific room
-        const lookupValue = user.authMethod === 'nostr' ? user.metadata.pubkey : userIdentifier;
-        
-        [rows] = await connection.execute(`
-          SELECT a.*, u.nostr_pubkey, u.timezone 
-          FROM appointments a 
-          JOIN users u ON (u.id = a.id_users_provider OR u.id = a.id_users_customer)
-          WHERE a.location = ? AND u.nostr_pubkey = ?
-        `, [roomId, lookupValue]);
+        if (user.authMethod === 'nostr') {
+          // Nostr users: lookup by nostr_pubkey
+          [rows] = await connection.execute(`
+            SELECT a.*, u.nostr_pubkey, u.timezone 
+            FROM appointments a 
+            JOIN users u ON (u.id = a.id_users_provider OR u.id = a.id_users_customer)
+            WHERE a.location = ? AND u.nostr_pubkey = ?
+          `, [roomId, user.metadata.pubkey]);
+        } else if (user.authMethod === 'oauth') {
+          // OAuth users: lookup by user ID
+          const userId = user.metadata.userId;
+          [rows] = await connection.execute(`
+            SELECT a.*, u.timezone 
+            FROM appointments a 
+            JOIN users u ON (u.id = a.id_users_provider OR u.id = a.id_users_customer)
+            WHERE a.location = ? AND u.id = ?
+          `, [roomId, userId]);
+        } else {
+          connection.release();
+          return res.status(400).json({ 
+            success: false,
+            error: 'Unsupported authentication method' 
+          });
+        }
       } else {
         // Guest - just verify the room exists (already validated)
         [rows] = await connection.execute(`
