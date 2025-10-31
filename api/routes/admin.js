@@ -143,22 +143,34 @@ export const setupAdminRoutes = (app) => {
       }
       
       const [rows] = await connection.execute(
-        `SELECT pp.username, u.id as user_id, u.email, u.nostr_pubkey
+        `SELECT pp.username, u.id as user_id, u.email, u.nostr_pubkey, u.id_roles,
+                r.id as role_id, r.name as role_name, r.slug as role_slug
         FROM users u
         LEFT JOIN provider_profiles pp ON pp.user_id = u.id 
+        LEFT JOIN roles r ON u.id_roles = r.id
         WHERE u.id = ?`,
         [userId]
       );
-      
+
       if (rows.length === 0) {
         return res.status(404).json({ error: 'User not found' });
       }
-      
+
+      const user = rows[0];
+
       return res.json({ 
-        username: rows[0].username,
-        userId: rows[0].user_id,
-        email: rows[0].email,
-        nostrPubkey: rows[0].nostr_pubkey  // Will be null if not set
+        status: 'success',
+        user: {
+          id: user.user_id,
+          username: user.username,
+          email: user.email,
+          nostrPubkey: user.nostr_pubkey,
+          role: user.role_id ? {
+            id: user.role_id,
+            name: user.role_name,
+            slug: user.role_slug
+          } : null
+        }
       });
     } finally {
       connection.release();
